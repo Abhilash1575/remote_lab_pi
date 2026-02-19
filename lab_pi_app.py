@@ -127,9 +127,13 @@ class LabPiState:
         self.start_time = datetime.now(timezone.utc)
     
     def get_uptime(self):
-        """Get uptime since Pi started"""
+        """Get uptime since Pi started in seconds"""
         delta = datetime.now(timezone.utc) - self.start_time
-        total_seconds = int(delta.total_seconds())
+        return int(delta.total_seconds())
+
+    def get_uptime_string(self):
+        """Get uptime as formatted string HH:MM:SS"""
+        total_seconds = self.get_uptime()
         hours = total_seconds // 3600
         minutes = (total_seconds % 3600) // 60
         seconds = total_seconds % 60
