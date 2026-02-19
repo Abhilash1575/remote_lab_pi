@@ -254,6 +254,7 @@ sudo tee /etc/systemd/system/vlab-lab-pi.service > /dev/null << EOF
 [Unit]
 Description=Virtual Lab - Lab Pi Node
 After=network.target
+Wants=network-online.target
 
 [Service]
 Type=simple
@@ -263,6 +264,9 @@ EnvironmentFile=$PROJECT_DIR/.env
 ExecStart=$PROJECT_DIR/venv/bin/python $PROJECT_DIR/lab_pi_app.py
 Restart=always
 RestartSec=10
+StandardOutput=append:/var/log/vlab-lab-pi.log
+StandardError=append:/var/log/vlab-lab-pi.log
+Environment=PYTHONUNBUFFERED=1
 
 [Install]
 WantedBy=multi-user.target
