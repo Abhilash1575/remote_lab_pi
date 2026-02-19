@@ -146,38 +146,11 @@ sudo apt install -y \
     ffmpeg
 
 # ============================================================================
-# Step 5: Install DFRobot UPS support (Raspberry Pi only) - Placeholder
-# (Actual installation happens after project setup)
+# Step 5: Install DFRobot UPS support (Raspberry Pi only)
 # ============================================================================
-echo -e "${YELLOW}Step 5: DFRobot UPS will be installed after project setup...${NC}"
-
-# ============================================================================
-# Step 6: Clone/Pull Repository
-# ============================================================================
-echo -e "${YELLOW}Step 6: Setting up project...${NC}"
-
 PROJECT_DIR="$HOME/lab-pi"
-if [ -d "$PROJECT_DIR" ]; then
-    echo "Project directory already exists. Pulling latest changes..."
-    cd "$PROJECT_DIR"
-    # Configure git to handle divergent branches (use --no-rebase for merge)
-    git pull --no-rebase || {
-        echo "Git pull failed due to divergent branches. Attempting to reset..."
-        git fetch origin
-        git reset --hard origin/main
-    }
-else
-    echo "Cloning repository..."
-    # Replace with your actual repository URL
-    REPO_URL=${REPO_URL:-"https://github.com/Abhilash1575/remote_lab_pi.git"}
-    git clone "$REPO_URL" "$PROJECT_DIR"
-    cd "$PROJECT_DIR"
-fi
 
-# ============================================================================
-# Step 7: Install DFRobot UPS support (Raspberry Pi only)
-# ============================================================================
-echo -e "${YELLOW}Step 7: Installing DFRobot UPS support...${NC}"
+echo -e "${YELLOW}Step 5: Installing DFRobot UPS support...${NC}"
 
 # Check if we're running on Raspberry Pi
 if [ "$(uname -m)" = "armv7l" ] || [ "$(uname -m)" = "aarch64" ]; then
@@ -198,9 +171,33 @@ else
 fi
 
 # ============================================================================
-# Step 8: Create Configuration
+# Step 6: Clone Repository
 # ============================================================================
-echo -e "${YELLOW}Step 8: Creating Lab Pi configuration...${NC}"
+echo -e "${YELLOW}Step 6: Setting up project...${NC}"
+
+PROJECT_DIR="$HOME/lab-pi"
+if [ -d "$PROJECT_DIR" ]; then
+    echo "Project directory already exists. Pulling latest changes..."
+    cd "$PROJECT_DIR"
+    # Configure git to handle divergent branches
+    git config pull.rebase false
+    git pull || {
+        echo "Git pull failed due to divergent branches. Attempting to reset..."
+        git fetch origin
+        git reset --hard origin/main
+    }
+else
+    echo "Cloning repository..."
+    # Replace with your actual repository URL
+    REPO_URL=${REPO_URL:-"https://github.com/Abhilash1575/remote_lab_pi.git"}
+    git clone "$REPO_URL" "$PROJECT_DIR"
+    cd "$PROJECT_DIR"
+fi
+
+# ============================================================================
+# Step 7: Create Configuration
+# ============================================================================
+echo -e "${YELLOW}Step 7: Creating Lab Pi configuration...${NC}"
 
 # Create .env file for Lab Pi
 cat > "$PROJECT_DIR/.env" << EOF
