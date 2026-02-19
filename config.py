@@ -62,6 +62,7 @@ LAB_CONFIG = {
     'LAB_PI_ID': os.environ.get('VLAB_PI_ID', 'lab-default'),  # e.g., "lab-001", "lab-002" - default for testing
     'LAB_PI_NAME': os.environ.get('VLAB_PI_NAME', 'Lab Pi'),  # e.g., "Experiment 1 - LED Blinky"
     'LAB_PI_MAC': os.environ.get('VLAB_PI_MAC', ''),  # MAC address for identification
+    'LOCATION': os.environ.get('LOCATION', ''),  # Physical location of the Lab Pi
     
     # Experiment this Lab Pi handles
     'EXPERIMENT_ID': int(os.environ.get('EXPERIMENT_ID', 1)),  # Which experiment this PI runs

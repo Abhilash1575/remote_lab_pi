@@ -109,6 +109,7 @@ class LabPiState:
         self.experiment_id = LAB_CONFIG['EXPERIMENT_ID']
         self.master_url = LAB_CONFIG['MASTER_URL']
         self.master_api_key = LAB_CONFIG['MASTER_API_KEY']
+        self.location = LAB_CONFIG.get('LOCATION', '')
         
         # Registration status
         self.registered = False
@@ -233,13 +234,21 @@ class MasterPiCommunicator:
     def register(self):
         """Register this Lab Pi with Master Pi"""
         try:
+            # Get hardware/firmware info
+            firmware_version = self._get_firmware_version()
+            hardware_version = self._get_hardware_version()
+            
             data = {
                 'lab_pi_id': lab_state.lab_pi_id,
                 'name': lab_state.lab_pi_name,
                 'mac_address': lab_state.lab_pi_mac,
                 'ip_address': self._get_ip_address(),
                 'hostname': self._get_hostname(),
-                'experiment_id': lab_state.experiment_id
+                'experiment_id': lab_state.experiment_id,
+                'device_type': 'Raspberry Pi',
+                'firmware_version': firmware_version,
+                'hardware_version': hardware_version,
+                'location': lab_state.location or ''
             }
             response = requests.post(
                 f"{self.base_url}/api/lab-pi/register",
@@ -377,6 +386,23 @@ class MasterPiCommunicator:
             return subprocess.check_output('hostname', text=True).strip()
         except:
             return 'unknown'
+    
+    def _get_firmware_version(self):
+        """Get firmware version - returns default 1.0 for Lab Pi"""
+        return '1.0'
+    
+    def _get_hardware_version(self):
+        """Get hardware version from /proc/cpuinfo"""
+        try:
+            # Read /proc/cpuinfo to get hardware info
+            with open('/proc/cpuinfo', 'r') as f:
+                for line in f:
+                    if 'Model' in line:
+                        # Extract hardware info from "Model : ..."
+                        return line.split(':', 1)[1].strip()
+        except:
+            pass
+        return 'Raspberry Pi'
 
 
 # Create communicator instance
