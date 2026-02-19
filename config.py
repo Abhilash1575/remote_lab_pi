@@ -34,7 +34,7 @@ MASTER_CONFIG = {
     
     # Heartbeat settings (for Lab Pi monitoring)
     'HEARTBEAT_INTERVAL': 30,  # seconds
-    'HEARTBEAT_TIMEOUT': 120,  # seconds (Lab Pi offline if no heartbeat)
+    'HEARTBEAT_TIMEOUT': 30,  # seconds (Lab Pi offline if no heartbeat)
     
     # Mail settings
     'MAIL_SERVER': os.environ.get('MAIL_SERVER', 'smtp.gmail.com'),
