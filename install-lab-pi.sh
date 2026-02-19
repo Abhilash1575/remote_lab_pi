@@ -100,7 +100,7 @@ fi
 
 # Master URL
 if [ -z "$MASTER_URL" ]; then
-    read -p "Enter Master Pi URL (e.g., http://192.168.1.100:5000): " MASTER_URL
+    read -p "Enter Master Pi URL (e.g., http://192.168.1.5:5000): " MASTER_URL
 fi
 
 # Master API Key (optional)
