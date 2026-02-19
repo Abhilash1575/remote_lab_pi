@@ -58,8 +58,11 @@ try:
     from dotenv import load_dotenv
     env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env')
     load_dotenv(env_path)
+    print(f"✓ Loaded .env from: {env_path}")
 except ImportError:
-    pass
+    print("⚠ python-dotenv not installed, using system env vars")
+except Exception as e:
+    print(f"⚠ Error loading .env: {e}")
 
 # Import configuration
 from config import PI_TYPE, LAB_CONFIG, MASTER_CONFIG, get_config, BASE_DIR, UPLOAD_DIR, DEFAULT_FW_DIR
