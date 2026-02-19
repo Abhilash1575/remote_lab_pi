@@ -372,7 +372,8 @@ class MasterPiCommunicator:
     def _get_ip_address(self):
         """Get IP address of this Pi"""
         try:
-            s = subprocess.socket(subprocess.AF_INET, subprocess.SOCK_DGRAM)
+            import socket
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             s.connect(("8.8.8.8", 80))
             ip = s.getsockname()[0]
             s.close()
