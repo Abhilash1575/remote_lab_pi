@@ -140,7 +140,7 @@ sudo apt install -y \
 # ============================================================================
 echo -e "${YELLOW}Step 4: Setting up project...${NC}"
 
-PROJECT_DIR="/home/pi/vlab"
+PROJECT_DIR="$HOME/lab-pi"
 if [ -d "$PROJECT_DIR" ]; then
     echo "Project directory already exists. Pulling latest changes..."
     cd "$PROJECT_DIR"
@@ -148,7 +148,7 @@ if [ -d "$PROJECT_DIR" ]; then
 else
     echo "Cloning repository..."
     # Replace with your actual repository URL
-    REPO_URL=${REPO_URL:-"https://github.com/yourusername/vlab.git"}
+    REPO_URL=${REPO_URL:-"https://github.com/Abhilash1575/remote_lab_pi.git"}
     git clone "$REPO_URL" "$PROJECT_DIR"
     cd "$PROJECT_DIR"
 fi
@@ -204,7 +204,7 @@ After=network.target
 
 [Service]
 Type=simple
-User=pi
+User=$USER
 WorkingDirectory=$PROJECT_DIR
 EnvironmentFile=$PROJECT_DIR/.env
 ExecStart=$PROJECT_DIR/venv/bin/python $PROJECT_DIR/lab_pi_app.py
@@ -222,7 +222,7 @@ sudo systemctl enable vlab-lab-pi.service
 # Step 8: Hardware Setup (GPIO)
 # ============================================================================
 echo -e "${YELLOW}Step 8: Setting up GPIO permissions...${NC}"
-sudo usermod -a -G gpio pi
+sudo usermod -a -G gpio $USER
 
 # ============================================================================
 # Step 9: Final Summary
