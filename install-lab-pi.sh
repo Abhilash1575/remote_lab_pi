@@ -66,14 +66,19 @@ get_hostname() {
 echo -e "${YELLOW}Step 1: Configuration${NC}"
 echo ""
 
-# Lab Pi ID
+# Get hostname for default values
+DETECTED_HOSTNAME=$(get_hostname)
+
+# Lab Pi ID - use hostname as default
 if [ -z "$LAB_PI_ID" ]; then
-    read -p "Enter Lab Pi ID (e.g., lab-001): " LAB_PI_ID
+    read -p "Enter Lab Pi ID (default: lab-$DETECTED_HOSTNAME): " LAB_PI_ID
+    LAB_PI_ID=${LAB_PI_ID:-lab-$DETECTED_HOSTNAME}
 fi
 
-# Lab Pi Name
+# Lab Pi Name - use hostname as default
 if [ -z "$LAB_PI_NAME" ]; then
-    read -p "Enter Lab Pi Name (e.g., LED Blinky Lab): " LAB_PI_NAME
+    read -p "Enter Lab Pi Name (default: Lab Pi $DETECTED_HOSTNAME): " LAB_PI_NAME
+    LAB_PI_NAME=${LAB_PI_NAME:-Lab Pi $DETECTED_HOSTNAME}
 fi
 
 # MAC Address
@@ -88,24 +93,30 @@ if [ -z "$LAB_PI_MAC" ]; then
         fi
     fi
     if [ -z "$LAB_PI_MAC" ]; then
-        read -p "Enter MAC address (e.g., b8:27:eb:xx:xx:xx): " LAB_PI_MAC
+        read -p "Enter MAC address (optional, press Enter to skip): " LAB_PI_MAC
     fi
 fi
 
-# Experiment ID
+# Experiment ID - default to 1
 if [ -z "$EXPERIMENT_ID" ]; then
     read -p "Enter Experiment ID (default: 1): " EXPERIMENT_ID
     EXPERIMENT_ID=${EXPERIMENT_ID:-1}
 fi
 
-# Master URL
+# Master URL - use common default
 if [ -z "$MASTER_URL" ]; then
-    read -p "Enter Master Pi URL (e.g., http://192.168.1.5:5000): " MASTER_URL
+    read -p "Enter Master Pi URL (default: http://192.168.1.5:5000): " MASTER_URL
+    MASTER_URL=${MASTER_URL:-http://192.168.1.5:5000}
 fi
 
 # Master API Key (optional)
 if [ -z "$MASTER_API_KEY" ]; then
     read -p "Enter Master API Key (optional, press Enter to skip): " MASTER_API_KEY
+fi
+
+# Location (optional)
+if [ -z "$LOCATION" ]; then
+    read -p "Enter Location (optional, e.g., Lab Room 101): " LOCATION
 fi
 
 echo ""
@@ -115,6 +126,7 @@ echo "  Lab Pi Name: $LAB_PI_NAME"
 echo "  MAC Address: $LAB_PI_MAC"
 echo "  Experiment ID: $EXPERIMENT_ID"
 echo "  Master URL: $MASTER_URL"
+echo "  Location: $LOCATION"
 echo ""
 
 # ============================================================================
@@ -207,10 +219,11 @@ cat > "$PROJECT_DIR/.env" << EOF
 VLAB_PI_TYPE=lab
 VLAB_PI_ID=$LAB_PI_ID
 VLAB_PI_NAME="$LAB_PI_NAME"
-VLAB_PI_MAC=$LAB_PI_MAC
+VLAB_PI_MAC="$LAB_PI_MAC"
 EXPERIMENT_ID=$EXPERIMENT_ID
 MASTER_URL=$MASTER_URL
 MASTER_API_KEY=$MASTER_API_KEY
+LOCATION="$LOCATION"
 
 # Server settings
 LAB_PORT=5001
