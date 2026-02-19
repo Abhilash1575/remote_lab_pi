@@ -133,12 +133,45 @@ sudo apt install -y \
     python3-dev \
     git \
     curl \
-    wget
+    wget \
+    swig \
+    liblgpio-dev \
+    portaudio19-dev \
+    libasound2-dev \
+    esptool \
+    avrdude \
+    openocd \
+    alsa-utils \
+    libportaudio2 \
+    ffmpeg
 
 # ============================================================================
-# Step 4: Clone Repository
+# Step 5: Install DFRobot UPS support (Raspberry Pi only)
 # ============================================================================
-echo -e "${YELLOW}Step 4: Setting up project...${NC}"
+echo -e "${YELLOW}Step 5: Installing DFRobot UPS support...${NC}"
+
+# Check if we're running on Raspberry Pi
+if [ "$(uname -m)" = "armv7l" ] || [ "$(uname -m)" = "aarch64" ]; then
+    if [ -f "/proc/device-tree/model" ] && grep -q "Raspberry" "/proc/device-tree/model"; then
+        echo -e "${GREEN}✅ Detected Raspberry Pi - Installing DFRobot UPS support${NC}"
+        
+        # Copy UPS script
+        if [ -f "$PROJECT_DIR/install/rpi_dfrobot_ups_all_in_one.sh" ]; then
+            REAL_USER=$(whoami) bash "$PROJECT_DIR/install/rpi_dfrobot_ups_all_in_one.sh"
+        else
+            echo -e "${YELLOW}⚠️ DFRobot UPS script not found${NC}"
+        fi
+    else
+        echo -e "${YELLOW}⚠️ Not a Raspberry Pi - Skipping DFRobot UPS installation${NC}"
+    fi
+else
+    echo -e "${YELLOW}⚠️ Not ARM architecture - Skipping DFRobot UPS installation${NC}"
+fi
+
+# ============================================================================
+# Step 6: Clone Repository
+# ============================================================================
+echo -e "${YELLOW}Step 6: Setting up project...${NC}"
 
 PROJECT_DIR="$HOME/lab-pi"
 if [ -d "$PROJECT_DIR" ]; then
@@ -154,9 +187,9 @@ else
 fi
 
 # ============================================================================
-# Step 5: Create Configuration
+# Step 7: Create Configuration
 # ============================================================================
-echo -e "${YELLOW}Step 5: Creating Lab Pi configuration...${NC}"
+echo -e "${YELLOW}Step 7: Creating Lab Pi configuration...${NC}"
 
 # Create .env file for Lab Pi
 cat > "$PROJECT_DIR/.env" << EOF
@@ -180,7 +213,7 @@ echo "Configuration saved to $PROJECT_DIR/.env"
 # ============================================================================
 # Step 6: Setup Python Environment
 # ============================================================================
-echo -e "${YELLOW}Step 6: Setting up Python environment...${NC}"
+echo -e "${YELLOW}Step 8: Setting up Python environment...${NC}"
 
 cd "$PROJECT_DIR"
 
@@ -205,7 +238,7 @@ fi
 # ============================================================================
 # Step 7: Create Systemd Service
 # ============================================================================
-echo -e "${YELLOW}Step 7: Creating systemd service...${NC}"
+echo -e "${YELLOW}Step 9: Creating systemd service...${NC}"
 
 sudo tee /etc/systemd/system/vlab-lab-pi.service > /dev/null << EOF
 [Unit]
@@ -231,11 +264,11 @@ sudo systemctl enable vlab-lab-pi.service
 # ============================================================================
 # Step 8: Hardware Setup (GPIO)
 # ============================================================================
-echo -e "${YELLOW}Step 8: Setting up GPIO permissions...${NC}"
+echo -e "${YELLOW}Step 10: Setting up GPIO permissions...${NC}"
 sudo usermod -a -G gpio $USER
 
 # ============================================================================
-# Step 9: Final Summary
+# Step 11: Final Summary
 # ============================================================================
 echo ""
 echo -e "${GREEN}========================================${NC}"
