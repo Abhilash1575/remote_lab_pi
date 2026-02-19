@@ -42,6 +42,14 @@ except ImportError:
     UPS_AVAILABLE = False
     ups = None
 
+# Import Audio Capture module
+try:
+    import audio_capture
+    AUDIO_CAPTURE_AVAILABLE = True
+except ImportError:
+    audio_capture = None
+    AUDIO_CAPTURE_AVAILABLE = False
+
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -125,6 +133,9 @@ class LabPiState:
         
         # Uptime tracking
         self.start_time = datetime.now(timezone.utc)
+        
+        # Audio streaming
+        self.audio_streaming = False
     
     def get_uptime(self):
         """Get uptime since Pi started in seconds"""
@@ -473,6 +484,7 @@ def status():
         'uptime': lab_state.get_uptime(),
         'relay_state': lab_state.relay_state,
         'hardware_ready': lab_state.hardware_ready,
+        'audio_streaming': lab_state.audio_streaming,
         'registered_at': lab_state.registered_at.isoformat() if lab_state.registered_at else None,
         'last_heartbeat': lab_state.last_heartbeat_sent.isoformat() if lab_state.last_heartbeat_sent else None
     })
@@ -572,6 +584,16 @@ def lab_pi_session_start():
     # Power on hardware
     master_comm.power_on_hardware()
     
+    # Start audio streaming if available
+    if AUDIO_CAPTURE_AVAILABLE and audio_capture:
+        try:
+            audio_capture.init_audio_capture(lab_state.master_url, lab_state.lab_pi_id)
+            audio_capture.start_audio_stream()
+            lab_state.audio_streaming = True
+            print("🎤 Audio streaming started")
+        except Exception as e:
+            print(f"Failed to start audio: {e}")
+    
     return jsonify({
         'success': True,
         'session_key': session_key,
@@ -586,6 +608,15 @@ def lab_pi_session_end():
     session_key = data.get('session_key')
     
     print(f"🛑 Ending session: {session_key}")
+    
+    # Stop audio streaming
+    if lab_state.audio_streaming and audio_capture:
+        try:
+            audio_capture.stop_audio_stream()
+            lab_state.audio_streaming = False
+            print("🎤 Audio streaming stopped")
+        except Exception as e:
+            print(f"Failed to stop audio: {e}")
     
     lab_state.session_active = False
     lab_state.current_session_key = None

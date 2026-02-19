@@ -241,8 +241,12 @@ const videoUrl = `${window.location.protocol}//${window.location.hostname}:${VID
 // Audio server URL - uses same host but audio port
 const audioServerUrl = `${window.location.protocol}//${window.location.hostname}:${AUDIO_PORT}`;
 
+// Master URL for SocketIO audio (port 5000)
+const MASTER_URL = BASE_URL;
+
 console.log('Video URL:', videoUrl);
 console.log('Audio server URL:', audioServerUrl);
+console.log('Master URL:', MASTER_URL);
 
 /* ----------------- SOCKET.IO ----------------- */
 const socket = io.connect(window.location.origin, { transports: ['websocket', 'polling'] });
@@ -1038,51 +1042,59 @@ toggleVideoBtn.addEventListener('click', () => {
 
 let audioPC = null;
 let audioStarting = false;
+let audioContext = null;
+let audioSource = null;
+let mediaSource = null;
+
+// SocketIO-based audio streaming from Master Pi
+function setupAudioSocketIO() {
+    const audioSocket = io.connect(MASTER_URL, { transports: ['websocket', 'polling'] });
+    
+    audioSocket.on('connect', () => {
+        console.log('Audio SocketIO connected');
+    });
+    
+    audioSocket.on('audio_data', (data) => {
+        // Play audio from Lab Pi
+        try {
+            const audioBytes = atob(data.audio);
+            const audioArray = new Uint8Array(audioBytes.length);
+            for (let i = 0; i < audioBytes.length; i++) {
+                audioArray[i] = audioBytes.charCodeAt(i);
+            }
+            
+            // Create audio buffer and play
+            if (!audioContext) {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            
+            audioContext.decodeAudioData(audioArray.buffer, (buffer) => {
+                if (audioSource) {
+                    audioSource.stop();
+                }
+                audioSource = audioContext.createBufferSource();
+                audioSource.buffer = buffer;
+                audioSource.connect(audioContext.destination);
+                audioSource.start(0);
+            });
+        } catch (e) {
+            console.error('Error playing audio:', e);
+        }
+    });
+    
+    return audioSocket;
+}
+
+let audioSocket = null;
 
 async function startAudio() {
     if (audioPC || audioStarting) return; // already started or starting
     audioStarting = true;
     const toggleBtn = document.getElementById('toggleAudio');
-    toggleBtn.disabled = true;
-    toggleBtn.innerText = 'Starting...';
-
+    
+    // Use SocketIO-based audio streaming instead of WebRTC
     try {
-        audioPC = new RTCPeerConnection();
-
-        audioPC.ontrack = (event) => {
-            document.getElementById('audioFeed').srcObject = event.streams[0];
-        };
-
-        audioPC.oniceconnectionstatechange = () => {
-            if (audioPC.iceConnectionState === 'failed' || audioPC.iceConnectionState === 'closed') {
-                console.log('Audio ICE connection failed or closed');
-                stopAudio();
-            }
-        };
-
-        audioPC.addTransceiver('audio', { direction: 'recvonly' });
-
-        const offer = await audioPC.createOffer();
-        await audioPC.setLocalDescription(offer);
-
-        // Use dynamic audio server URL
-        const response = await fetch(`${audioServerUrl}/offer`, {
-            method: 'POST',
-            body: JSON.stringify({
-                sdp: audioPC.localDescription.sdp,
-                type: audioPC.localDescription.type
-            }),
-            headers: { 'Content-Type': 'application/json' }
-        });
-
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-
-        const answer = await response.json();
-        await audioPC.setRemoteDescription(answer);
-
-        toggleBtn.disabled = false;
+        audioSocket = setupAudioSocketIO();
         toggleBtn.innerText = 'Stop Audio';
         audioStarting = false;
     } catch (error) {
@@ -1091,17 +1103,6 @@ async function startAudio() {
         audioStarting = false;
         alert('Failed to start audio. Please check console for details.');
     }
-}
-
-function stopAudio() {
-    if (audioPC) {
-        audioPC.close();
-        audioPC = null;
-    }
-    document.getElementById('audioFeed').srcObject = null;
-    const toggleBtn = document.getElementById('toggleAudio');
-    toggleBtn.disabled = false;
-    toggleBtn.innerText = 'Start Audio';
 }
 
 const audioFeed = document.getElementById('audioFeed');

@@ -192,6 +192,16 @@ source venv/bin/activate
 pip install --upgrade pip
 pip install -r requirements.txt
 
+# Install PyAudio for audio capture (requires portaudio)
+# Try to install pre-built wheel first, otherwise build from source
+echo "Installing PyAudio for audio capture..."
+if ! pip show pyaudio >/dev/null 2>&1; then
+    # Install system dependencies for PyAudio
+    sudo apt-get update -qq
+    sudo apt-get install -y -qq portaudio19-dev python3-pyaudio libasound2-dev 2>/dev/null || true
+    pip install pyaudio || echo "Warning: PyAudio installation failed. Audio features will be disabled."
+fi
+
 # ============================================================================
 # Step 7: Create Systemd Service
 # ============================================================================
