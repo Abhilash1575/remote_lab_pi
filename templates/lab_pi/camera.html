@@ -133,9 +133,11 @@
     
     <div class="video-container">
         <div class="video-wrapper">
-            <!-- Placeholder - replace with actual stream URL -->
-            <div class="placeholder">
+            <!-- Camera stream from ustreamer on port 8080 -->
+            <img id="cameraStream" src="http://localhost:8080" alt="Camera Stream">
+            <div class="placeholder" id="streamPlaceholder" style="display:none;">
                 <p>Camera stream will appear here</p>
+            </div>
                 <!-- Example MJPEG stream: -->
                 <!-- <img src="http://localhost:8080/?action=stream" alt="Camera Stream"> -->
             </div>

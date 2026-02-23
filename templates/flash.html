@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Firmware Flash - Lab Pi</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 100vh;
+            color: #fff;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        
+        h1 {
+            color: #00d9ff;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .card {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 15px;
+            padding: 25px;
+            margin: 20px 0;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        label {
+            display: block;
+            color: #888;
+            margin-bottom: 8px;
+        }
+        
+        select, input[type="file"] {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #333;
+            border-radius: 8px;
+            background: #1a1a2e;
+            color: #fff;
+            font-size: 1em;
+        }
+        
+        .btn {
+            display: inline-block;
+            padding: 12px 30px;
+            background: #00d9ff;
+            color: #1a1a2e;
+            border: none;
+            border-radius: 8px;
+            font-size: 1em;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s;
+            width: 100%;
+        }
+        
+        .btn:hover {
+            background: #00b8d4;
+            transform: translateY(-2px);
+        }
+        
+        .btn-danger {
+            background: #ff1744;
+            color: #fff;
+        }
+        
+        .btn-danger:hover {
+            background: #d50000;
+        }
+        
+        .status {
+            background: #000;
+            border-radius: 10px;
+            padding: 15px;
+            height: 250px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            margin-top: 20px;
+        }
+        
+        .status .line {
+            margin: 5px 0;
+        }
+        
+        .status-success {
+            color: #00c853;
+        }
+        
+        .status-error {
+            color: #ff1744;
+        }
+        
+        .status-info {
+            color: #00d9ff;
+        }
+        
+        .btn-row {
+            display: flex;
+            gap: 10px;
+        }
+        
+        a {
+            color: #00d9ff;
+            text-decoration: none;
+        }
+        
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>⚡ Firmware Flashing</h1>
+            <a href="/experiment">← Back to Experiment</a>
+        </div>
+        
+        <div class="card">
+            <h3 style="color: #00d9ff; margin-bottom: 20px;">Upload Firmware</h3>
+            
+            <div class="form-group">
+                <label>Board Type</label>
+                <select id="board">
+                    <option value="esp32">ESP32</option>
+                    <option value="esp8266">ESP8266</option>
+                    <option value="arduino">Arduino (ATmega328P)</option>
+                    <option value="attiny">ATtiny</option>
+                    <option value="stm32">STM32</option>
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label>Serial Port</label>
+                <select id="port">
+                    <option value="">Auto-select (first available)</option>
+                    {% for port in ports %}
+                    <option value="{{ port }}">{{ port }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label>Firmware File</label>
+                <input type="file" id="firmware" accept=".bin,.hex,.ino">
+            </div>
+            
+            <button class="btn" onclick="flashFirmware()">Flash Firmware</button>
+            
+            <div class="status" id="status">
+                <div class="line status-info">Ready to flash firmware...</div>
+            </div>
+        </div>
+        
+        <div class="card">
+            <h3 style="color: #ff1744; margin-bottom: 20px;">Factory Reset</h3>
+            <p style="color: #888; margin-bottom: 15px;">Restore the microcontroller to its default firmware.</p>
+            
+            <div class="form-group">
+                <label>Board Type</label>
+                <select id="resetBoard">
+                    <option value="esp32">ESP32</option>
+                    <option value="esp8266">ESP8266</option>
+                    <option value="arduino">Arduino</option>
+                </select>
+            </div>
+            
+            <button class="btn btn-danger" onclick="factoryReset()">Factory Reset</button>
+        </div>
+    </div>
+    
+    <script>
+        const socket = io();
+        
+        socket.on('connect', function() {
+            addStatus('Connected to Lab Pi', 'info');
+        });
+        
+        socket.on('flashing_status', function(data) {
+            const isError = data.toLowerCase().includes('error') || data.includes('❌');
+            const isSuccess = data.toLowerCase().includes('completed') || data.includes('✅');
+            addStatus(data, isError ? 'error' : isSuccess ? 'success' : 'info');
+        });
+        
+        function addStatus(text, type) {
+            const statusEl = document.getElementById('status');
+            const line = document.createElement('div');
+            line.className = 'line status-' + type;
+            line.textContent = text;
+            statusEl.appendChild(line);
+            statusEl.scrollTop = statusEl.scrollHeight;
+        }
+        
+        async function flashFirmware() {
+            const board = document.getElementById('board').value;
+            const port = document.getElementById('port').value;
+            const file = document.getElementById('firmware').files[0];
+            
+            if (!file) {
+                alert('Please select a firmware file');
+                return;
+            }
+            
+            addStatus('Uploading firmware...', 'info');
+            
+            const formData = new FormData();
+            formData.append('board', board);
+            formData.append('port', port);
+            formData.append('firmware', file);
+            
+            try {
+                const response = await fetch('/flash', {
+                    method: 'POST',
+                    body: formData
+                });
+                const result = await response.json();
+                addStatus(result.status, 'info');
+            } catch (e) {
+                addStatus('Error: ' + e, 'error');
+            }
+        }
+        
+        async function factoryReset() {
+            if (!confirm('Are you sure you want to factory reset? This will restore default firmware.')) {
+                return;
+            }
+            
+            const board = document.getElementById('resetBoard').value;
+            addStatus('Starting factory reset...', 'info');
+            
+            try {
+                const response = await fetch('/factory_reset', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ board: board })
+                });
+                const result = await response.json();
+                addStatus(result.status || result.error, result.error ? 'error' : 'info');
+            } catch (e) {
+                addStatus('Error: ' + e, 'error');
+            }
+        }
+        
+        // Auto-refresh ports
+        setInterval(() => {
+            socket.emit('list_ports');
+        }, 5000);
+        
+        socket.on('ports_list', function(ports) {
+            const portSelect = document.getElementById('port');
+            const currentValue = portSelect.value;
+            portSelect.innerHTML = '<option value="">Auto-select (first available)</option>';
+            ports.forEach(p => {
+                portSelect.innerHTML += `<option value="${p}">${p}</option>`;
+            });
+            if (currentValue) portSelect.value = currentValue;
+        });
+    </script>
+</body>
+</html>

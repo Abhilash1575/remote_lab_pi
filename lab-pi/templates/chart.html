@@ -40,25 +40,35 @@ html, body { height: 100%; margin: 0; font-family: 'Inter', sans-serif; backgrou
 <canvas id="mainChart" class="fullscreen-chart"></canvas>
 
 <script>
-// Session monitoring - optionally close when session ends (disabled by default for user convenience)
-// User can manually close or it will stay open until browser is closed
-/*
+// Session monitoring - auto-close when session ends OR time expired
 function checkSessionStatus() {
-    // Check if there are any active sessions running
     const keys = Object.keys(localStorage);
-    const activeSessions = keys.filter(key => key.startsWith('sessionStatus_') && localStorage.getItem(key) === 'IN_PROGRESS');
-    const completedSessions = keys.filter(key => key.startsWith('sessionStatus_') && localStorage.getItem(key) === 'COMPLETED');
-
-    // Only close if there are completed sessions AND no active sessions running
-    if (completedSessions.length > 0 && activeSessions.length === 0) {
-        // All sessions have ended, close this window
-        window.close();
+    
+    // Check if session is completed or expired
+    const sessionKey = new URLSearchParams(window.location.search).get('key');
+    if (sessionKey) {
+        const sessionStatus = localStorage.getItem('sessionStatus_' + sessionKey);
+        const sessionEndTime = localStorage.getItem('sessionEndTime_' + sessionKey);
+        
+        // Close if session is completed/expired or time has run out
+        if (sessionStatus === 'COMPLETED' || sessionStatus === 'EXPIRED' || sessionStatus === 'TERMINATED') {
+            window.close();
+            return;
+        }
+        
+        // Also check if session time has run out (end time has passed)
+        if (sessionEndTime) {
+            const endTime = parseInt(sessionEndTime);
+            if (Date.now() > endTime) {
+                window.close();
+                return;
+            }
+        }
     }
 }
 
-// Check session status every 30 seconds (less aggressive)
-setInterval(checkSessionStatus, 30000);
-*/
+// Check session status every 10 seconds
+setInterval(checkSessionStatus, 10000);
 
 document.getElementById('backBtn').addEventListener('click', () => {
     window.close();

@@ -1,0 +1,805 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ experiment_name }} - Lab Pi</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 100vh;
+            color: #fff;
+        }
+        
+        .header {
+            background: #0f3460;
+            padding: 15px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+        }
+        
+        .header h1 {
+            color: #00d9ff;
+            font-size: 1.3em;
+        }
+        
+        .session-info {
+            display: flex;
+            gap: 20px;
+            align-items: center;
+        }
+        
+        .session-key {
+            background: rgba(0, 217, 255, 0.2);
+            padding: 5px 15px;
+            border-radius: 5px;
+            font-family: monospace;
+        }
+        
+        .timer {
+            color: #ff9100;
+            font-weight: bold;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        .experiment-title {
+            text-align: center;
+            margin: 20px 0;
+        }
+        
+        .experiment-title h2 {
+            color: #00d9ff;
+            font-size: 1.8em;
+        }
+        
+        .experiment-title p {
+            color: #888;
+            margin-top: 10px;
+        }
+        
+        .main-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-top: 20px;
+        }
+        
+        @media (max-width: 1000px) {
+            .main-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+        
+        .card {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 15px;
+            padding: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .card h3 {
+            color: #00d9ff;
+            margin-bottom: 15px;
+            font-size: 1.2em;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            padding-bottom: 10px;
+        }
+        
+        .controls-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+        }
+        
+        .control-item {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 15px;
+            border-radius: 10px;
+        }
+        
+        .control-item label {
+            display: block;
+            color: #888;
+            margin-bottom: 8px;
+            font-size: 0.9em;
+        }
+        
+        input[type="range"] {
+            width: 100%;
+            height: 8px;
+            border-radius: 5px;
+            background: #333;
+            outline: none;
+            -webkit-appearance: none;
+        }
+        
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: #00d9ff;
+            cursor: pointer;
+        }
+        
+        .slider-value {
+            text-align: center;
+            color: #00d9ff;
+            font-weight: bold;
+            margin-top: 5px;
+        }
+        
+        .btn {
+            display: inline-block;
+            padding: 12px 24px;
+            background: #00d9ff;
+            color: #1a1a2e;
+            border: none;
+            border-radius: 8px;
+            font-size: 1em;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s;
+            width: 100%;
+            text-align: center;
+        }
+        
+        .btn:hover {
+            background: #00b8d4;
+            transform: translateY(-2px);
+        }
+        
+        .btn-success {
+            background: #00c853;
+        }
+        
+        .btn-success:hover {
+            background: #00a843;
+        }
+        
+        .btn-danger {
+            background: #ff1744;
+            color: #fff;
+        }
+        
+        .btn-danger:hover {
+            background: #d50000;
+        }
+        
+        .btn-warning {
+            background: #ff9100;
+            color: #1a1a2e;
+        }
+        
+        .buttons-row {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        
+        .buttons-row .btn {
+            flex: 1;
+            min-width: 120px;
+        }
+        
+        .sensor-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+        }
+        
+        .sensor-item {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+        }
+        
+        .sensor-label {
+            color: #888;
+            font-size: 0.9em;
+            margin-bottom: 5px;
+        }
+        
+        .sensor-value {
+            color: #00d9ff;
+            font-size: 1.8em;
+            font-weight: bold;
+        }
+        
+        .sensor-unit {
+            color: #666;
+            font-size: 0.8em;
+        }
+        
+        .chart-container {
+            height: 300px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 10px;
+            padding: 15px;
+        }
+        
+        .serial-output {
+            background: #000;
+            border-radius: 10px;
+            padding: 15px;
+            height: 200px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 0.85em;
+            color: #0f0;
+        }
+        
+        .serial-output .line {
+            margin: 3px 0;
+        }
+        
+        .serial-output .sent {
+            color: #ff9100;
+        }
+        
+        .serial-output .received {
+            color: #00d9ff;
+        }
+        
+        .serial-controls {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        
+        .serial-controls input {
+            flex: 1;
+            padding: 10px;
+            border: 1px solid #333;
+            border-radius: 5px;
+            background: #1a1a2e;
+            color: #fff;
+            font-family: monospace;
+        }
+        
+        .serial-controls button {
+            padding: 10px 20px;
+        }
+        
+        .port-selector {
+            margin-bottom: 15px;
+        }
+        
+        .port-selector select {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #333;
+            border-radius: 5px;
+            background: #1a1a2e;
+            color: #fff;
+            font-size: 1em;
+        }
+        
+        .flash-section {
+            margin-top: 20px;
+        }
+        
+        .flash-controls {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        
+        .flash-controls select,
+        .flash-controls input[type="file"] {
+            padding: 10px;
+            border: 1px solid #333;
+            border-radius: 5px;
+            background: #1a1a2e;
+            color: #fff;
+        }
+        
+        .flash-status {
+            margin-top: 15px;
+            padding: 15px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 5px;
+            font-family: monospace;
+            font-size: 0.9em;
+            max-height: 150px;
+            overflow-y: auto;
+        }
+        
+        .status-success {
+            color: #00c853;
+        }
+        
+        .status-error {
+            color: #ff1744;
+        }
+        
+        .status-info {
+            color: #00d9ff;
+        }
+        
+        .tabs {
+            display: flex;
+            gap: 5px;
+            margin-bottom: 15px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            padding-bottom: 10px;
+        }
+        
+        .tab {
+            padding: 10px 20px;
+            background: transparent;
+            border: none;
+            color: #888;
+            cursor: pointer;
+            border-radius: 5px;
+            transition: all 0.3s;
+        }
+        
+        .tab:hover {
+            background: rgba(0, 217, 255, 0.1);
+            color: #00d9ff;
+        }
+        
+        .tab.active {
+            background: rgba(0, 217, 255, 0.2);
+            color: #00d9ff;
+        }
+        
+        .tab-content {
+            display: none;
+        }
+        
+        .tab-content.active {
+            display: block;
+        }
+        
+        .action-buttons {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+        }
+        
+        .action-buttons a {
+            flex: 1;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🔬 Lab Pi - {{ experiment_name }}</h1>
+        <div class="session-info">
+            <span class="session-key">Session: {{ session_key }}</span>
+            <span class="timer" id="timer">--:--</span>
+            <a href="/" class="btn" style="padding: 8px 15px; font-size: 0.9em;">Home</a>
+        </div>
+    </div>
+    
+    <div class="container">
+        <div class="experiment-title">
+            <h2>{{ experiment.title }}</h2>
+            <p>{{ experiment.description }}</p>
+        </div>
+        
+        <div class="tabs">
+            <button class="tab active" onclick="showTab('controls')">Controls</button>
+            <button class="tab" onclick="showTab('sensors')">Sensors</button>
+            <button class="tab" onclick="showTab('serial')">Serial</button>
+            <button class="tab" onclick="showTab('flash')">Flash</button>
+        </div>
+        
+        <!-- Controls Tab -->
+        <div class="tab-content active" id="tab-controls">
+            <div class="card">
+                <h3>🎮 Experiment Controls</h3>
+                <div class="controls-grid">
+                    {% for control in experiment.controls %}
+                        {% if control.type == 'slider' %}
+                            <div class="control-item">
+                                <label>{{ control.label }}</label>
+                                <input type="range" 
+                                       id="{{ control.id }}" 
+                                       min="{{ control.min }}" 
+                                       max="{{ control.max }}" 
+                                       value="{{ control.default }}"
+                                       oninput="updateSliderValue('{{ control.id }}')">
+                                <div class="slider-value" id="{{ control.id }}_value">{{ control.default }}</div>
+                            </div>
+                        {% elif control.type == 'button' %}
+                            <div class="control-item">
+                                <button class="btn {{ 'btn-success' if 'start' in control.action or 'cw' in control.action else 'btn-danger' if 'stop' in control.action or 'ccw' in control.action else 'btn-warning' if 'reset' in control.action else '' }}"
+                                        onclick="sendExperimentCommand('{{ control.action }}')">
+                                    {{ control.label }}
+                                </button>
+                            </div>
+                        {% endif %}
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+        
+        <!-- Sensors Tab -->
+        <div class="tab-content" id="tab-sensors">
+            <div class="card">
+                <h3>📊 Real-time Sensor Data</h3>
+                <div class="sensor-grid">
+                    {% for sensor in experiment.sensors %}
+                        <div class="sensor-item">
+                            <div class="sensor-label">{{ sensor|upper }}</div>
+                            <div class="sensor-value" id="sensor_{{ sensor }}">--</div>
+                            <div class="sensor-unit" id="unit_{{ sensor }}">{{ 'RPM' if sensor == 'rpm' else 'V' if sensor == 'voltage' else 'A' if sensor == 'current' else '°C' if sensor == 'temperature' else '%' if sensor == 'humidity' else '' }}</div>
+                        </div>
+                    {% endfor %}
+                </div>
+                
+                {% if experiment.chart %}
+                <div class="chart-container" style="margin-top: 20px;">
+                    <canvas id="sensorChart"></canvas>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+        
+        <!-- Serial Tab -->
+        <div class="tab-content" id="tab-serial">
+            <div class="card">
+                <h3>🔌 Serial Communication</h3>
+                <div class="port-selector">
+                    <label>Select Port:</label>
+                    <select id="serialPort" onchange="connectSerial()">
+                        <option value="">Select a port...</option>
+                    </select>
+                </div>
+                <div class="serial-output" id="serialOutput">
+                    <div class="line">Waiting for serial connection...</div>
+                </div>
+                <div class="serial-controls">
+                    <input type="text" id="serialCommand" placeholder="Enter command..." onkeypress="handleSerialKeyPress(event)">
+                    <button class="btn" onclick="sendSerialCommand()">Send</button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Flash Tab -->
+        <div class="tab-content" id="tab-flash">
+            <div class="card">
+                <h3>⚡ Firmware Flashing</h3>
+                <div class="flash-controls">
+                    <select id="flashBoard">
+                        <option value="esp32">ESP32</option>
+                        <option value="esp8266">ESP8266</option>
+                        <option value="arduino">Arduino</option>
+                        <option value="attiny">ATtiny</option>
+                        <option value="stm32">STM32</option>
+                    </select>
+                    <select id="flashPort">
+                        <option value="">Auto-select port</option>
+                    </select>
+                    <input type="file" id="firmwareFile" accept=".bin,.hex,.ino">
+                    <button class="btn btn-warning" onclick="flashFirmware()">Flash</button>
+                </div>
+                <div class="flash-status" id="flashStatus">
+                    <div class="line status-info">Ready to flash firmware...</div>
+                </div>
+                
+                <div style="margin-top: 20px;">
+                    <h4 style="color: #888; margin-bottom: 10px;">Factory Reset</h4>
+                    <div class="flash-controls">
+                        <select id="resetBoard">
+                            <option value="esp32">ESP32</option>
+                            <option value="arduino">Arduino</option>
+                        </select>
+                        <button class="btn btn-danger" onclick="factoryReset()">Factory Reset</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="action-buttons">
+            <a href="/camera" class="btn">📹 Camera</a>
+            <a href="/audio" class="btn">🎤 Audio</a>
+            <a href="/static/sop/exp.pdf" target="_blank" class="btn">📄 View SOP</a>
+            <button class="btn btn-danger" onclick="endSession()">End Session</button>
+        </div>
+    </div>
+    
+    <script>
+        // Socket connection
+        const socket = io();
+        
+        // Session timing
+        let sessionStartTime = Date.now();
+        var sessionDurationSeconds = 3600;
+        try { sessionDurationSeconds = parseInt('{{ session_duration }}') || 3600; } catch(e) {}
+        
+        function updateTimer() {
+            const elapsed = Math.floor((Date.now() - sessionStartTime) / 1000);
+            const remaining = Math.max(0, sessionDurationSeconds - elapsed);
+            const mins = Math.floor(remaining / 60);
+            const secs = remaining % 60;
+            document.getElementById('timer').textContent = 
+                `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+            
+            if (remaining <= 0) {
+                window.location.href = '/?expired=1';
+            }
+        }
+        setInterval(updateTimer, 1000);
+        
+        // Tab management
+        function showTab(tabId) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+            event.target.classList.add('active');
+            document.getElementById('tab-' + tabId).classList.add('active');
+        }
+        
+        // Slider value update
+        function updateSliderValue(id) {
+            const value = document.getElementById(id).value;
+            document.getElementById(id + '_value').textContent = value;
+        }
+        
+        // Experiment commands
+        function sendExperimentCommand(action) {
+            const params = {};
+            
+            // Gather slider values
+            const sliders = document.querySelectorAll('input[type="range"]');
+            sliders.forEach(s => {
+                params[s.id] = parseInt(s.value);
+            });
+            
+            socket.emit('experiment_command', { command: action, params: params });
+            addSerialOutput(`[SENT] ${action}: ${JSON.stringify(params)}`, 'sent');
+        }
+        
+        // Serial communication
+        function connectSerial() {
+            const port = document.getElementById('serialPort').value;
+            if (port) {
+                socket.emit('connect_serial', { port: port, baud: 115200 });
+            }
+        }
+        
+        function sendSerialCommand() {
+            const cmd = document.getElementById('serialCommand').value;
+            if (cmd) {
+                socket.emit('send_command', { cmd: cmd });
+                document.getElementById('serialCommand').value = '';
+            }
+        }
+        
+        function handleSerialKeyPress(event) {
+            if (event.key === 'Enter') {
+                sendSerialCommand();
+            }
+        }
+        
+        // Socket events
+        socket.on('connect', function() {
+            addSerialOutput('Connected to Lab Pi server', 'info');
+            socket.emit('list_ports');
+        });
+        
+        socket.on('ports_list', function(ports) {
+            const portSelect = document.getElementById('serialPort');
+            const flashPortSelect = document.getElementById('flashPort');
+            portSelect.innerHTML = '<option value="">Select a port...</option>';
+            flashPortSelect.innerHTML = '<option value="">Auto-select port</option>';
+            ports.forEach(p => {
+                portSelect.innerHTML += `<option value="${p}">${p}</option>`;
+                flashPortSelect.innerHTML += `<option value="${p}">${p}</option>`;
+            });
+        });
+        
+        socket.on('serial_status', function(data) {
+            addSerialOutput(`Serial: ${data.status}`, data.status === 'connected' ? 'info' : 'error');
+        });
+        
+        socket.on('feedback', function(data) {
+            addSerialOutput(data, 'received');
+        });
+        
+        socket.on('sensor_data', function(data) {
+            // Update sensor displays
+            for (const [key, value] of Object.entries(data)) {
+                const element = document.getElementById('sensor_' + key);
+                if (element) {
+                    element.textContent = typeof value === 'number' ? value.toFixed(2) : value;
+                }
+            }
+            
+            // Update chart
+            if (window.sensorChart && data.timestamp !== false) {
+                updateChart(data);
+            }
+        });
+        
+        function addSerialOutput(text, type) {
+            const output = document.getElementById('serialOutput');
+            const line = document.createElement('div');
+            line.className = 'line ' + type;
+            line.textContent = text;
+            output.appendChild(line);
+            output.scrollTop = output.scrollHeight;
+        }
+        
+        // Chart setup
+        let sensorChart;
+        const chartData = {
+            labels: [],
+            datasets: []
+        };
+        
+        const sensorColors = {
+            'rpm': '#ff9100',
+            'voltage': '#00c853',
+            'current': '#00d9ff',
+            'temperature': '#ff1744',
+            'humidity': '#7c4dff'
+        };
+        
+        function initChart() {
+            const ctx = document.getElementById('sensorChart');
+            if (!ctx) return;
+            
+            sensorChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Sensor Data',
+                        data: [],
+                        borderColor: '#00d9ff',
+                        backgroundColor: 'rgba(0, 217, 255, 0.1)',
+                        fill: true,
+                        tension: 0.4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: {
+                            display: true,
+                            grid: { color: 'rgba(255,255,255,0.1)' },
+                            ticks: { color: '#888' }
+                        },
+                        y: {
+                            display: true,
+                            grid: { color: 'rgba(255,255,255,0.1)' },
+                            ticks: { color: '#888' }
+                        }
+                    },
+                    plugins: {
+                        legend: { labels: { color: '#fff' } }
+                    }
+                }
+            });
+        }
+        
+        function updateChart(data) {
+            const now = new Date().toLocaleTimeString();
+            sensorChart.data.labels.push(now);
+            sensorChart.data.datasets[0].data.push(Object.values(data)[0]);
+            
+            // Keep only last 20 points
+            if (sensorChart.data.labels.length > 20) {
+                sensorChart.data.labels.shift();
+                sensorChart.data.datasets[0].data.shift();
+            }
+            
+            sensorChart.update();
+        }
+        
+        // Initialize
+        if (document.getElementById('sensorChart')) {
+            initChart();
+        }
+        
+        // Flashing functions
+        async function flashFirmware() {
+            const board = document.getElementById('flashBoard').value;
+            const port = document.getElementById('flashPort').value;
+            const file = document.getElementById('firmwareFile').files[0];
+            
+            if (!file) {
+                alert('Please select a firmware file');
+                return;
+            }
+            
+            const formData = new FormData();
+            formData.append('board', board);
+            formData.append('port', port);
+            formData.append('firmware', file);
+            
+            const statusEl = document.getElementById('flashStatus');
+            statusEl.innerHTML = '<div class="line status-info">Uploading firmware...</div>';
+            
+            try {
+                const response = await fetch('/api/flash', {
+                    method: 'POST',
+                    body: formData
+                });
+                const result = await response.json();
+                statusEl.innerHTML += `<div class="line">${result.status}</div>`;
+            } catch (e) {
+                statusEl.innerHTML += `<div class="line status-error">Error: ${e}</div>`;
+            }
+        }
+        
+        async function factoryReset() {
+            const board = document.getElementById('resetBoard').value;
+            
+            if (!confirm('Are you sure you want to factory reset? This will restore default firmware.')) {
+                return;
+            }
+            
+            const statusEl = document.getElementById('flashStatus');
+            statusEl.innerHTML = '<div class="line status-info">Starting factory reset...</div>';
+            
+            try {
+                const response = await fetch('/factory_reset', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ board: board })
+                });
+                const result = await response.json();
+                statusEl.innerHTML += `<div class="line">${result.status || result.error}</div>`;
+            } catch (e) {
+                statusEl.innerHTML += `<div class="line status-error">Error: ${e}</div>`;
+            }
+        }
+        
+        // Socket for flashing status
+        socket.on('flashing_status', function(data) {
+            const statusEl = document.getElementById('flashStatus');
+            const isError = data.includes('Error') || data.includes('error') || data.includes('❌');
+            const isSuccess = data.includes('completed') || data.includes('✅');
+            statusEl.innerHTML += `<div class="line ${isError ? 'status-error' : isSuccess ? 'status-success' : 'status-info'}">${data}</div>`;
+            statusEl.scrollTop = statusEl.scrollHeight;
+        });
+        
+        // End session
+        async function endSession() {
+            if (!confirm('Are you sure you want to end this session?')) {
+                return;
+            }
+            
+            try {
+                await fetch('/api/end-session', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ status: 'USER_ENDED' })
+                });
+                window.location.href = '/';
+            } catch (e) {
+                alert('Error ending session: ' + e);
+            }
+        }
+        
+        // Auto-refresh ports
+        setInterval(() => {
+            socket.emit('list_ports');
+        }, 5000);
+    </script>
+</body>
+</html>

@@ -55,7 +55,8 @@ if not GPIO_AVAILABLE:
 bus = SMBus(BUS)
 
 # Logging configuration
-LOG_FILE = "/home/abhi/virtual_lab/ups_log.csv"
+LOG_FILE = "/home/abhi/lab-pi/ups_log.csv"
+BATTERY_STATUS_FILE = "/home/abhi/lab-pi/battery_status.json"
 LOG_INTERVAL = 30  # seconds
 LOG_RETENTION = 6 * 3600  # 6 hours in seconds
 
@@ -144,7 +145,22 @@ def init_csv_log():
 
 def log_data(soc, voltage, ac, chg):
     """Log data to CSV file with retention control"""
+    import json
     global LOG_RETENTION
+    
+    # Write battery status to JSON file for Lab Pi to read
+    try:
+        battery_data = {
+            'soc': round(soc, 2) if soc else 0,
+            'voltage': round(voltage, 3) if voltage else 0,
+            'ac_status': ac,
+            'charging_status': chg,
+            'timestamp': datetime.now().isoformat()
+        }
+        with open(BATTERY_STATUS_FILE, 'w') as f:
+            json.dump(battery_data, f)
+    except Exception as e:
+        print(f"Failed to write battery status: {e}")
     
     # Check if log file needs to be rotated (older than 6 hours)
     if os.path.exists(LOG_FILE):

@@ -527,7 +527,7 @@ socket.on('feedback', (line) => {
   // If this feedback line contains key/value pairs, parse and feed into sensor_data handler
   try {
     // quick check for presence of separators and at least one digit
-    if((text.includes(':') || text.includes('=') || text.includes('@') || text.includes(';') || text.includes(',')) && /\d/.test(text)){
+    if((text.includes(':') || text.includes('=') || text.includes('@') || text.includes('|') || text.includes(';') || text.includes(',')) && /\d/.test(text)){
       const parsed = parseLineToMap(text);
       // Only emit if parsed contains at least one numeric value
       const hasNumeric = Object.values(parsed).some(v => typeof v === 'number' && !isNaN(v));
@@ -540,7 +540,7 @@ socket.on('feedback', (line) => {
 });
 
 /* ----------------- DYNAMIC CONTROLS (auto variable choices) ----------------- */
-let knownSensorKeys = new Set(); // dynamic now
+let knownSensorKeys = new Set(['v', 'i', 'voltage', 'current', 'speed', 'rpm', 'temp', 'temperature', 'humidity', 'pressure', 'distance']); // dynamic now, with common defaults
 function createControlElement(cfg){
   const wrapper = document.createElement('div');
   wrapper.className='control-row';
@@ -829,6 +829,11 @@ socket.on('sensor_data', (payload) => {
     if(!knownSensorKeys.has(k)) knownSensorKeys.add(k);
   });
 
+  // If dropdown is open, refresh it with new keys
+  if(varDropdown.style.display === 'block'){
+    showVarDropdown(varDropdownMode);
+  }
+
   // Update dropdown options
   updateYAxisFilterOptions(numericKeys);
 
@@ -1003,14 +1008,24 @@ socket.on('connect_error', (err) => { feedbackAdd('Socket connect error: ' + Str
 
 /* ----------------- Expand chart (open in new tab) ----------------- */
 document.getElementById('expandChartBtn').addEventListener('click', () => {
+  if (!sessionKey) {
+    feedbackAdd('No active session - please start a session first');
+    return;
+  }
   const win = window.open('/chart?key=' + sessionKey, '_blank');
   if (win) openedWindows.push(win);
+  if (!win) feedbackAdd('Popup blocked - please allow popups');
 });
 
 /* ----------------- Expand video (open in new tab) ----------------- */
 document.getElementById('expandVideoBtn').addEventListener('click', () => {
+  if (!sessionKey) {
+    feedbackAdd('No active session - please start a session first');
+    return;
+  }
   const win = window.open('/camera?key=' + sessionKey, '_blank');
   if (win) openedWindows.push(win);
+  if (!win) feedbackAdd('Popup blocked - please allow popups');
 });
 
 /* ----------------- Pause chart ----------------- */
@@ -1021,7 +1036,20 @@ window.addEventListener('load', () => {
   // Set video feed dynamically
   document.getElementById('videoFeed').src = videoUrl;
   
-  const raw = localStorage.getItem('evl_layout'); if(raw){ try{ const arr = JSON.parse(raw); dynamicControls.innerHTML=''; arr.forEach(cfg=>createControlElement(cfg)); }catch(e){} }
+  const raw = localStorage.getItem('evl_layout'); 
+  if(raw){ 
+    try{ 
+      const arr = JSON.parse(raw); 
+      dynamicControls.innerHTML=''; 
+      arr.forEach(cfg=>{
+        createControlElement(cfg);
+        // Also populate knownSensorKeys from saved layout
+        if(cfg.dataKey && !knownSensorKeys.has(cfg.dataKey)){
+          knownSensorKeys.add(cfg.dataKey);
+        }
+      }); 
+    }catch(e){} 
+  }
 });
 
 const videoFeed = document.getElementById('videoFeed');

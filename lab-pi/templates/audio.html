@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Audio Stream - Lab Pi</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 100vh;
+            color: #fff;
+        }
+        
+        .header {
+            background: #0f3460;
+            padding: 15px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+        }
+        
+        .header h1 {
+            color: #00d9ff;
+            font-size: 1.3em;
+        }
+        
+        .back-btn {
+            color: #00d9ff;
+            text-decoration: none;
+            padding: 8px 16px;
+            border: 1px solid #00d9ff;
+            border-radius: 5px;
+            transition: all 0.3s;
+        }
+        
+        .back-btn:hover {
+            background: rgba(0, 217, 255, 0.1);
+        }
+        
+        .container {
+            max-width: 800px;
+            margin: 30px auto;
+            padding: 20px;
+        }
+        
+        .audio-card {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 15px;
+            padding: 30px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            text-align: center;
+        }
+        
+        .audio-card h2 {
+            color: #00d9ff;
+            margin-bottom: 20px;
+        }
+        
+        .audio-player {
+            width: 100%;
+            margin: 20px 0;
+        }
+        
+        .controls {
+            margin-top: 20px;
+        }
+        
+        button {
+            padding: 12px 24px;
+            margin: 5px;
+            border-radius: 6px;
+            border: none;
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 14px;
+            transition: all 0.3s;
+        }
+        
+        #startBtn {
+            background: #00d9ff;
+            color: #041726;
+        }
+        
+        #startBtn:hover {
+            background: #00b8d4;
+        }
+        
+        #stopBtn {
+            background: #ff4757;
+            color: white;
+        }
+        
+        #stopBtn:hover {
+            background: #ff3344;
+        }
+        
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        #status {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 8px;
+            font-weight: 500;
+        }
+        
+        .error {
+            background: rgba(255, 71, 87, 0.2);
+            color: #ff4757;
+            border: 1px solid #ff4757;
+        }
+        
+        .success {
+            background: rgba(46, 213, 115, 0.2);
+            color: #2ed573;
+            border: 1px solid #2ed573;
+        }
+        
+        .info {
+            background: rgba(0, 217, 255, 0.1);
+            color: #00d9ff;
+            border: 1px solid #00d9ff;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 20px;
+            text-align: left;
+        }
+        
+        .info p {
+            margin: 5px 0;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🎤 Audio Stream - Lab Pi</h1>
+        <a href="/experiment" class="back-btn">← Back to Experiment</a>
+    </div>
+    
+    <div class="container">
+        <div class="audio-card">
+            <h2>Real-time Audio Streaming</h2>
+            <audio id="player" class="audio-player" autoplay controls></audio>
+            
+            <div class="controls">
+                <button id="startBtn" onclick="start()">Start Streaming</button>
+                <button id="stopBtn" onclick="stop()" disabled>Stop Streaming</button>
+            </div>
+            
+            <div id="status"></div>
+            
+            <div class="info">
+                <p><strong>Note:</strong> This streams audio from the Lab Pi device to your browser.</p>
+                <p>Make sure your browser allows autoplay and that speakers are enabled.</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let pc = null;
+        // Audio server runs on port 9002
+        const AUDIO_SERVER_URL = window.location.protocol + '//' + window.location.hostname + ':9002';
+
+        function showStatus(msg, isError = false) {
+            const status = document.getElementById('status');
+            status.textContent = msg;
+            status.className = isError ? 'error' : 'success';
+        }
+
+        async function start() {
+            document.getElementById("startBtn").disabled = true;
+            document.getElementById("stopBtn").disabled = false;
+            showStatus('Connecting to audio server...');
+
+            try {
+                pc = new RTCPeerConnection();
+
+                pc.ontrack = (event) => {
+                    document.getElementById("player").srcObject = event.streams[0];
+                    showStatus('Audio connected successfully!');
+                };
+
+                pc.oniceconnectionstatechange = () => {
+                    console.log('ICE state:', pc.iceConnectionState);
+                    if (pc.iceConnectionState === 'failed') {
+                        showStatus('Connection failed. Click Start to retry.', true);
+                        stop();
+                    } else if (pc.iceConnectionState === 'connected') {
+                        showStatus('Audio connected successfully!');
+                    } else if (pc.iceConnectionState === 'disconnected') {
+                        showStatus('Audio disconnected. Click Start to retry.', true);
+                        stop();
+                    }
+                };
+
+                pc.addTransceiver('audio', { direction: 'recvonly' });
+
+                const offer = await pc.createOffer();
+                await pc.setLocalDescription(offer);
+
+                console.log('Connecting to:', AUDIO_SERVER_URL + '/offer');
+                const response = await fetch(AUDIO_SERVER_URL + '/offer', {
+                    method: "POST",
+                    body: JSON.stringify({
+                        sdp: pc.localDescription.sdp,
+                        type: pc.localDescription.type
+                    }),
+                    headers: { "Content-Type": "application/json" }
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+
+                const answer = await response.json();
+                await pc.setRemoteDescription(answer);
+            } catch (error) {
+                console.error('Failed to start audio:', error);
+                showStatus('Failed to connect: ' + error.message + '. Make sure audio server is running on port 9002.', true);
+                stop();
+            }
+        }
+
+        function stop() {
+            if (pc) {
+                pc.close();
+                pc = null;
+            }
+            document.getElementById("player").srcObject = null;
+            document.getElementById("startBtn").disabled = false;
+            document.getElementById("stopBtn").disabled = true;
+        }
+        
+        // Auto-start audio on page load
+        window.onload = function() {
+            setTimeout(start, 1000);
+        };
+    </script>
+</body>
+</html>
