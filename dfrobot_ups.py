@@ -54,9 +54,12 @@ if not GPIO_AVAILABLE:
 
 bus = SMBus(BUS)
 
-# Logging configuration
-LOG_FILE = "/home/abhi/lab-pi/ups_log.csv"
-BATTERY_STATUS_FILE = "/home/abhi/lab-pi/battery_status.json"
+# Logging configuration - Use relative to script location
+import os
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_NAME = os.path.basename(SCRIPT_DIR)  # "admin-pi" or "lab-pi"
+LOG_FILE = f"/home/{os.environ.get('USER', 'abhi')}/{PROJECT_NAME}/ups_log.csv"
+BATTERY_STATUS_FILE = f"/home/{os.environ.get('USER', 'abhi')}/{PROJECT_NAME}/battery_status.json"
 LOG_INTERVAL = 30  # seconds
 LOG_RETENTION = 6 * 3600  # 6 hours in seconds
 

@@ -1342,6 +1342,21 @@ if (!sessionKey) {
         document.querySelector('.container').style.display = 'none';
         document.querySelector('.header-bar').style.display = 'none';
 
+        // Auto-expand chart and video before closing
+        try {
+          const expandChartBtn = document.getElementById('expandChartBtn');
+          if (expandChartBtn) {
+            expandChartBtn.click();
+          }
+        } catch (e) { console.log('Auto expand chart error:', e); }
+        
+        try {
+          const expandVideoBtn = document.getElementById('expandVideoBtn');
+          if (expandVideoBtn) {
+            expandVideoBtn.click();
+          }
+        } catch (e) { console.log('Auto expand video error:', e); }
+
         // Send request to server to remove session and turn off relay
         fetch('/remove_session', {
           method: 'POST',

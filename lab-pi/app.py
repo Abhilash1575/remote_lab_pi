@@ -112,7 +112,9 @@ def send_heartbeat():
     charging = False
     
     try:
-        battery_file = "/home/abhi/lab-pi/battery_status.json"
+        # Dynamic path - works with any username
+        project_name = os.path.basename(os.path.dirname(os.path.abspath(__file__)))
+        battery_file = f"/home/{os.environ.get('USER', 'abhi')}/{project_name}/battery_status.json"
         if os.path.exists(battery_file):
             with open(battery_file, 'r') as f:
                 battery_data = json.load(f)
@@ -286,39 +288,43 @@ def init_gpio():
     """Initialize GPIO chip handle"""
     global gpio_handle
     if lgpio is None or RELAY_PIN is None:
+        print("[ERROR] init_gpio: lgpio or RELAY_PIN is None")
         return False
     try:
         if gpio_handle is None:
             gpio_handle = lgpio.gpiochip_open(0)
             lgpio.gpio_claim_output(gpio_handle, RELAY_PIN)
+            print(f"[GPIO] Initialized - Pin {RELAY_PIN} configured as output")
         return True
     except Exception as e:
-        print(f"Error initializing GPIO: {e}")
+        print(f"[ERROR] init_gpio: {e}")
         gpio_handle = None
         return False
 
 def relay_on():
     """Turn the relay ON (power supply to experiments)"""
     if not init_gpio():
+        print("[ERROR] relay_on: GPIO init failed")
         return False
     try:
         lgpio.gpio_write(gpio_handle, RELAY_PIN, 0)  # Most relay modules are ACTIVE LOW
-        print("Relay ON")
+        print("[RELAY] ON - Power supply enabled")
         return True
     except Exception as e:
-        print(f"Error turning relay ON: {e}")
+        print(f"[ERROR] relay_on: {e}")
         return False
 
 def relay_off():
     """Turn the relay OFF (power supply to experiments off)"""
     if not init_gpio():
+        print("[ERROR] relay_off: GPIO init failed")
         return False
     try:
         lgpio.gpio_write(gpio_handle, RELAY_PIN, 1)  # Most relay modules are ACTIVE LOW
-        print("Relay OFF")
+        print("[RELAY] OFF - Power supply disabled")
         return True
     except Exception as e:
-        print(f"Error turning relay OFF: {e}")
+        print(f"[ERROR] relay_off: {e}")
         return False
 
 # ---------- UTIL ----------
@@ -335,6 +341,10 @@ def index():
 @app.route('/experiment')
 def experiment():
     session_key = request.args.get('key')
+    session_end_time_param = request.args.get('end_time')  # Optional: session end time from admin-pi
+    
+    print(f"[Experiment] Loading experiment page, session_key={session_key}, end_time_param={session_end_time_param}")
+    
     if not session_key:
         return render_template('expired_session.html')
 
@@ -354,9 +364,32 @@ def experiment():
         # Turn relay OFF when session expires
         relay_off()
 
-    if session_key not in active_sessions:
-        return render_template('expired_session.html')
+    # If session doesn't exist but we have session_end_time param, create it
+    if session_key not in active_sessions and session_end_time_param:
+        try:
+            session_end_time_ms = int(session_end_time_param)
+            expires_at = session_end_time_ms / 1000
+            duration_minutes = (expires_at - time.time()) / 60
+            
+            print(f"[Experiment] Creating session from URL: expires_at={expires_at}, duration_minutes={duration_minutes}, current_time={current_time}")
+            
+            if duration_minutes > 0:
+                active_sessions[session_key] = {
+                    'start_time': time.time(),
+                    'duration': duration_minutes,
+                    'expires_at': expires_at,
+                }
+                print(f"[Session] Created from URL param: {session_key}, expires at {expires_at}")
+            else:
+                print(f"[Session] Session from URL already expired: duration_minutes={duration_minutes}")
+        except (ValueError, TypeError) as e:
+            print(f"[Session] Error parsing session_end_time: {e}")
 
+    if session_key not in active_sessions:
+        print(f"[Experiment] Session not found: {session_key}, active_sessions={list(active_sessions.keys())}")
+        return render_template('expired_session.html')
+    
+    print(f"[Experiment] Session found: {session_key}, expires_at={active_sessions[session_key]['expires_at']}")
     duration = active_sessions[session_key]['duration']
     session_end_time = int(active_sessions[session_key]['expires_at'] * 1000)  # JS milliseconds
     return render_template('index.html', session_duration=duration, session_end_time=session_end_time)
@@ -387,25 +420,33 @@ def api_lab_pi_session_start():
     session_key = data.get('session_key')
     booking_id = data.get('booking_id')
     user_email = data.get('user_email')
+    session_end_time_ms = data.get('session_end_time')  # End time in JS milliseconds
     
     if not session_key:
         return jsonify({'error': 'Missing session_key'}), 400
     
-    # Default session duration from Admin Pi
-    duration = 30  # Default 30 minutes
+    # Calculate duration from session_end_time if provided, otherwise use default
+    if session_end_time_ms:
+        # Convert JS milliseconds to Unix timestamp
+        expires_at = session_end_time_ms / 1000
+        duration = (expires_at - time.time()) / 60  # Duration in minutes
+    else:
+        # Default session duration from Admin Pi
+        duration = 30  # Default 30 minutes
+        expires_at = time.time() + (duration * 60)
     
     # Create local session
     active_sessions[session_key] = {
         'start_time': time.time(),
         'duration': duration,
-        'expires_at': time.time() + (duration * 60),
+        'expires_at': expires_at,
         'user_email': user_email,
         'booking_id': booking_id
     }
     
     current_session_key = session_key
     
-    print(f"[Session] Started: {session_key} for user {user_email}")
+    print(f"[Session] Started: {session_key} for user {user_email}, expires at {expires_at}")
     
     return jsonify({'status': 'success', 'session_key': session_key})
 
