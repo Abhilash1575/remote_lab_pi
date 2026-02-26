@@ -298,11 +298,32 @@ echo -e "${YELLOW}Step 9b: Setting up session poller service...${NC}"
 
 # Copy session poller files if they exist
 if [ -f "$PROJECT_DIR/lab_pi_session_poller.py" ]; then
-    # Copy and install service
-    sudo cp $PROJECT_DIR/lab_pi_session_poller.service /etc/systemd/system/
+    # Get actual paths at install time
+    CURRENT_USER=$(whoami)
+    CURRENT_HOME=$(eval echo ~$CURRENT_USER)
+    
+    # Create service file with resolved paths
+    sudo tee /etc/systemd/system/lab_pi_session_poller.service > /dev/null << EOFSERVICE
+[Unit]
+Description=Lab Pi Session Poller
+After=network.target
+
+[Service]
+Type=simple
+User=$CURRENT_USER
+WorkingDirectory=$CURRENT_HOME/lab-pi
+EnvironmentFile=$CURRENT_HOME/lab-pi/.env
+ExecStart=/usr/bin/python3 $CURRENT_HOME/lab-pi/lab_pi_session_poller.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+EOFSERVICE
+    
     sudo systemctl daemon-reload
     sudo systemctl enable lab_pi_session_poller || true
-    echo -e "${GREEN}✅ Session poller service installed${NC}"
+    echo -e "${GREEN}✅ Session poller service installed (User: $CURRENT_USER)${NC}"
 else
     echo -e "${YELLOW}⚠️ Session poller not found - will use main app for session control${NC}"
 fi
