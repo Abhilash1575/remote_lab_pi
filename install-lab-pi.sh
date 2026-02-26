@@ -225,6 +225,9 @@ MASTER_URL=$MASTER_URL
 MASTER_API_KEY=$MASTER_API_KEY
 LOCATION="$LOCATION"
 
+# Session Poller - Admin Pi URL for session polling
+ADMIN_PI_URL=$MASTER_URL
+
 # Server settings
 LAB_PORT=5001
 LAB_HOST=0.0.0.0
@@ -287,6 +290,22 @@ EOF
 
 sudo systemctl daemon-reload
 sudo systemctl enable vlab-lab-pi.service
+
+# ============================================================================
+# Step 8b: Setup Session Poller Service (for hardware control)
+# ============================================================================
+echo -e "${YELLOW}Step 9b: Setting up session poller service...${NC}"
+
+# Copy session poller files if they exist
+if [ -f "$PROJECT_DIR/lab_pi_session_poller.py" ]; then
+    # Copy and install service
+    sudo cp $PROJECT_DIR/lab_pi_session_poller.service /etc/systemd/system/
+    sudo systemctl daemon-reload
+    sudo systemctl enable lab_pi_session_poller || true
+    echo -e "${GREEN}✅ Session poller service installed${NC}"
+else
+    echo -e "${YELLOW}⚠️ Session poller not found - will use main app for session control${NC}"
+fi
 
 # ============================================================================
 # Step 8: Hardware Setup (GPIO)

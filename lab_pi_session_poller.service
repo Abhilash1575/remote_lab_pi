@@ -1,0 +1,15 @@
+[Unit]
+Description=Lab Pi Session Poller
+After=network.target
+
+[Service]
+Type=simple
+User=%u
+WorkingDirectory=%h/lab-pi
+EnvironmentFile=%h/lab-pi/.env
+ExecStart=/usr/bin/python3 %h/lab-pi/lab_pi_session_poller.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
