@@ -105,8 +105,8 @@ fi
 
 # Master URL - use common default
 if [ -z "$MASTER_URL" ]; then
-    read -p "Enter Master Pi URL (default: http://192.168.1.5:5000): " MASTER_URL
-    MASTER_URL=${MASTER_URL:-http://192.168.1.5:5000}
+    read -p "Enter Master Pi URL (default: http://10.114.62.235:5000): " MASTER_URL
+    MASTER_URL=${MASTER_URL:-http://10.114.62.235:5000} 
 fi
 
 # Master API Key (optional)
