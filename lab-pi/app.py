@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
 import sys
+import os
+
+# Load environment variables from .env file
+from dotenv import load_dotenv
+env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env')
+load_dotenv(env_path)
 
 # Import lgpio FIRST before eventlet patches anything!
 try:
@@ -498,12 +504,14 @@ def toggle_relay():
         success = relay_on()
         if not success:
             print("[ERROR] Failed to turn relay ON - check GPIO connections")
-        return jsonify({'status': 'on' if success else 'error'})
+            return jsonify({'status': 'error', 'message': 'Error turning power ON: GPIO initialization failed. Check if lgpio is installed and GPIO pins are available.'}), 500
+        return jsonify({'status': 'on'})
     elif state == 'off':
         success = relay_off()
         if not success:
             print("[ERROR] Failed to turn relay OFF - check GPIO connections")
-        return jsonify({'status': 'off' if success else 'error'})
+            return jsonify({'status': 'error', 'message': 'Error turning power OFF: GPIO initialization failed. Check if lgpio is installed and GPIO pins are available.'}), 500
+        return jsonify({'status': 'off'})
     else:
         return jsonify({'status': 'error', 'message': 'Invalid state'}), 400
 
@@ -561,8 +569,8 @@ def flash():
     fw.save(dest)
 
     commands = {
-        'esp32': f"esptool.py --chip esp32 --port {port} write_flash 0x10000 {dest}",
-        'esp8266': f"esptool.py --port {port} write_flash 0x00000 {dest}",
+        'esp32': f"python3 -m esptool --chip esp32 --port {port} --baud 921600 write-flash 0x10000 {dest}",
+        'esp8266': f"python3 -m esptool --chip esp8266 --port {port} --baud 921600 write-flash 0x00000 {dest}",
         'arduino': f"avrdude -v -p atmega328p -c arduino -P {port} -b115200 -D -U flash:w:{dest}:i",
         'attiny': f"avrdude -v -p attiny85 -c usbasp -P {port} -U flash:w:{dest}:i",
         'stm32': f"openocd -f interface/stlink.cfg -f target/stm32f4x.cfg -c \"program {dest} 0x08000000 verify reset exit\"",
@@ -630,8 +638,8 @@ def factory_reset():
     default_port = available_ports[0] if available_ports else '/dev/ttyUSB0'
     port = port or default_port
     commands = {
-        'esp32': f"esptool.py --chip esp32 --port {port} write_flash 0x10000 {fpath}",
-        'esp8266': f"esptool.py --port {port} write_flash 0x00000 {fpath}",
+        'esp32': f"python3 -m esptool --chip esp32 --port {port} --baud 921600 write-flash 0x10000 {fpath}",
+        'esp8266': f"python3 -m esptool --chip esp8266 --port {port} --baud 921600 write-flash 0x00000 {fpath}",
         'arduino': f"avrdude -v -p atmega328p -c arduino -P {port} -b115200 -D -U flash:w:{fpath}:i",
         'attiny': f"avrdude -v -p attiny85 -c usbasp -P {port} -U flash:w:{fpath}:i",
         'stm32': f"openocd -f interface/stlink.cfg -f target/stm32f4x.cfg -c \"program {fpath} 0x08000000 verify reset exit\"",

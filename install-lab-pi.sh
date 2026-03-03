@@ -139,6 +139,7 @@ sudo apt update && sudo apt upgrade -y
 # Step 3: Install Dependencies
 # ============================================================================
 echo -e "${YELLOW}Step 3: Installing system dependencies...${NC}"
+sudo apt update
 sudo apt install -y \
     python3-pip \
     python3-venv \
@@ -151,11 +152,31 @@ sudo apt install -y \
     portaudio19-dev \
     libasound2-dev \
     esptool \
+    python3-esptool \
     avrdude \
     openocd \
     alsa-utils \
     libportaudio2 \
     ffmpeg
+
+# Install esptool as Python module (more reliable)
+echo "Installing esptool Python module..."
+pip3 install esptool
+
+# Install lgpio for GPIO control
+echo "Installing lgpio for GPIO control..."
+pip3 install lgpio
+
+# Install ustreamer from source (more reliable)
+echo "Installing ustreamer from source..."
+cd /tmp
+if [ ! -d "ustreamer" ]; then
+    git clone https://github.com/pikvm/ustreamer.git
+fi
+cd ustreamer
+make -j$(nproc)
+sudo make install
+cd "$PROJECT_DIR"
 
 # ============================================================================
 # Step 5: DFRobot UPS will be installed after project setup
@@ -335,9 +356,34 @@ echo -e "${YELLOW}Step 10: Setting up GPIO permissions...${NC}"
 sudo usermod -a -G gpio $USER
 
 # ============================================================================
-# Step 11: Final Summary
+# Step 11: Install Audio/Video Streaming Services
 # ============================================================================
-echo ""
+echo -e "${YELLOW}Step 11: Setting up Audio/Video streaming services...${NC}"
+
+# Copy service files
+if [ -f "$PROJECT_DIR/Audio/services/mjpg-streamer.service" ]; then
+    sudo cp "$PROJECT_DIR/Audio/services/mjpg-streamer.service" /etc/systemd/system/
+    echo "Copied mjpg-streamer.service"
+fi
+
+if [ -f "$PROJECT_DIR/Audio/services/audio_stream.service" ]; then
+    sudo cp "$PROJECT_DIR/Audio/services/audio_stream.service" /etc/systemd/system/
+    echo "Copied audio_stream.service"
+fi
+
+# Reload systemd
+sudo systemctl daemon-reload
+
+# Enable and start services
+echo "Enabling video streaming service..."
+sudo systemctl enable mjpg-streamer.service 2>/dev/null || true
+sudo systemctl start mjpg-streamer.service 2>/dev/null || true
+
+echo "Enabling audio streaming service..."
+sudo systemctl enable audio_stream.service 2>/dev/null || true
+sudo systemctl start audio_stream.service 2>/dev/null || true
+
+echo -e "${GREEN}Audio/Video services installed${NC}"
 echo -e "${GREEN}========================================${NC}"
 echo -e "${GREEN}Installation Complete!${NC}"
 echo -e "${GREEN}========================================${NC}"
