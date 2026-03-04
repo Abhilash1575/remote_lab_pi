@@ -151,6 +151,7 @@ sudo apt install -y \
     liblgpio-dev \
     portaudio19-dev \
     libasound2-dev \
+    libjpeg-dev \
     esptool \
     avrdude \
     openocd \
