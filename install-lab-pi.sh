@@ -140,6 +140,11 @@ sudo apt update && sudo apt upgrade -y
 # ============================================================================
 echo -e "${YELLOW}Step 3: Installing system dependencies...${NC}"
 sudo apt update
+
+# Remove conflicting esptool packages
+echo "Fixing esptool installation..."
+sudo apt remove -y esptool python3-esptool 2>/dev/null || true
+
 sudo apt install -y \
     python3-pip \
     python3-venv \
@@ -154,14 +159,13 @@ sudo apt install -y \
     libjpeg-dev \
     libevent-dev \
     libbsd-dev \
-    esptool \
     avrdude \
     openocd \
     alsa-utils \
     libportaudio2 \
     ffmpeg
 
-# Install esptool as Python module (more reliable)
+# Install esptool as Python module ONLY (more reliable)
 echo "Installing esptool Python module..."
 pip3 install --break-system-packages esptool
 
