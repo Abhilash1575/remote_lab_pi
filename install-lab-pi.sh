@@ -160,11 +160,11 @@ sudo apt install -y \
 
 # Install esptool as Python module (more reliable)
 echo "Installing esptool Python module..."
-pip3 install esptool
+pip3 install --break-system-packages esptool
 
 # Install lgpio for GPIO control
 echo "Installing lgpio for GPIO control..."
-pip3 install lgpio
+pip3 install --break-system-packages lgpio
 
 # Install ustreamer from source (more reliable)
 echo "Installing ustreamer from source..."
