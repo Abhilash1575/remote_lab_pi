@@ -638,8 +638,8 @@ def factory_reset():
     default_port = available_ports[0] if available_ports else '/dev/ttyUSB0'
     port = port or default_port
     commands = {
-        'esp32': f"python3 -m esptool --chip esp32 --port {port} --baud 921600 write_flash 0x10000 {fpath}",
-        'esp8266': f"python3 -m esptool --chip esp8266 --port {port} --baud 921600 write_flash 0x00000 {fpath}",
+        'esp32': f"python3 -m esptool --chip esp32 --port {port} --baud 921600 write-flash 0x10000 {fpath}",
+        'esp8266': f"python3 -m esptool --chip esp8266 --port {port} --baud 921600 write-flash 0x00000 {fpath}",
         'arduino': f"avrdude -v -p atmega328p -c arduino -P {port} -b115200 -D -U flash:w:{fpath}:i",
         'attiny': f"avrdude -v -p attiny85 -c usbasp -P {port} -U flash:w:{fpath}:i",
         'stm32': f"openocd -f interface/stlink.cfg -f target/stm32f4x.cfg -c \"program {fpath} 0x08000000 verify reset exit\"",
