@@ -569,8 +569,8 @@ def flash():
     fw.save(dest)
 
     commands = {
-        'esp32': f"python3 -m esptool --chip esp32 --port {port} --baud 921600 write_flash 0x10000 {dest}",
-        'esp8266': f"python3 -m esptool --chip esp8266 --port {port} --baud 921600 write_flash 0x00000 {dest}",
+        'esp32': f"python3 -m esptool --chip esp32 --port {port} --baud 921600 write-flash 0x10000 {dest}",
+        'esp8266': f"python3 -m esptool --chip esp8266 --port {port} --baud 921600 write-flash 0x00000 {dest}",
         'arduino': f"avrdude -v -p atmega328p -c arduino -P {port} -b115200 -D -U flash:w:{dest}:i",
         'attiny': f"avrdude -v -p attiny85 -c usbasp -P {port} -U flash:w:{dest}:i",
         'stm32': f"openocd -f interface/stlink.cfg -f target/stm32f4x.cfg -c \"program {dest} 0x08000000 verify reset exit\"",
