@@ -568,9 +568,10 @@ def flash():
     dest = os.path.join(UPLOAD_DIR, fname)
     fw.save(dest)
 
+    # Use esptool.py directly (pip installed) instead of python3 -m esptool to avoid apt conflict
     commands = {
-        'esp32': f"python3 -m esptool --chip esp32 --port {port} --baud 921600 write_flash 0x10000 {dest}",
-        'esp8266': f"python3 -m esptool --chip esp8266 --port {port} --baud 921600 write_flash 0x00000 {dest}",
+        'esp32': f"esptool.py --chip esp32 --port {port} --baud 921600 write_flash 0x10000 {dest}",
+        'esp8266': f"esptool.py --chip esp8266 --port {port} --baud 921600 write_flash 0x00000 {dest}",
         'arduino': f"avrdude -v -p atmega328p -c arduino -P {port} -b115200 -D -U flash:w:{dest}:i",
         'attiny': f"avrdude -v -p attiny85 -c usbasp -P {port} -U flash:w:{dest}:i",
         'stm32': f"openocd -f interface/stlink.cfg -f target/stm32f4x.cfg -c \"program {dest} 0x08000000 verify reset exit\"",
@@ -637,9 +638,10 @@ def factory_reset():
     available_ports = list_serial_ports()
     default_port = available_ports[0] if available_ports else '/dev/ttyUSB0'
     port = port or default_port
+    # Use esptool.py directly (pip installed) instead of python3 -m esptool to avoid apt conflict
     commands = {
-        'esp32': f"python3 -m esptool --chip esp32 --port {port} --baud 921600 write_flash 0x10000 {fpath}",
-        'esp8266': f"python3 -m esptool --chip esp8266 --port {port} --baud 921600 write_flash 0x00000 {fpath}",
+        'esp32': f"esptool.py --chip esp32 --port {port} --baud 921600 write_flash 0x10000 {fpath}",
+        'esp8266': f"esptool.py --chip esp8266 --port {port} --baud 921600 write_flash 0x00000 {fpath}",
         'arduino': f"avrdude -v -p atmega328p -c arduino -P {port} -b115200 -D -U flash:w:{fpath}:i",
         'attiny': f"avrdude -v -p attiny85 -c usbasp -P {port} -U flash:w:{fpath}:i",
         'stm32': f"openocd -f interface/stlink.cfg -f target/stm32f4x.cfg -c \"program {fpath} 0x08000000 verify reset exit\"",
