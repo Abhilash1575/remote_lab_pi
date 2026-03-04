@@ -152,7 +152,6 @@ sudo apt install -y \
     portaudio19-dev \
     libasound2-dev \
     esptool \
-    python3-esptool \
     avrdude \
     openocd \
     alsa-utils \
