@@ -15,7 +15,7 @@ ADDR = 0x36        # MAX17048
 # Try to import GPIO module - try lgpio first (used in main app), then gpiozero
 GPIO_AVAILABLE = False
 LGPIO_AVAILABLE = False
-AC_GPIO = 6  # GPIO6 = AC present
+AC_GPIO = 12  # GPIO12 = AC present (GPIO4,5,6 reserved on Pi 5)
 lgpio_handle = None
 
 try:
@@ -27,12 +27,12 @@ try:
         GPIO_AVAILABLE = True
         print("✅ LGPIO initialized successfully")
     except Exception as e:
-        # Try alternative claim method
+        # Try alternative - use LOWER attribute for pull-up
         try:
             lgpio_handle = lgpio.gpiochip_open(0)
-            lgpio.gpio_claim_input(lgpio_handle, AC_GPIO, lgpio.SET_BIAS_DISABLE)
+            lgpio.gpio_claim_input(lgpio_handle, AC_GPIO, lgpio.LOW)
             GPIO_AVAILABLE = True
-            print("✅ LGPIO initialized successfully (with bias)")
+            print("✅ LGPIO initialized successfully (with pull-down)")
         except Exception as e2:
             print(f"⚠️ LGPIO GPIO claim failed: {e2}")
 except ImportError:
@@ -40,17 +40,27 @@ except ImportError:
 except Exception as e:
     print(f"⚠️ LGPIO initialization failed: {e}")
 
-# Fallback to gpiozero if lgpio fails
+# Fallback to gpiozero if lgpio fails (but not on Pi 5 - gpiozero doesn't support it)
+IS_PI5 = False
+try:
+    with open("/proc/device-tree/model", "r") as f:
+        IS_PI5 = "Pi 5" in f.read()
+except:
+    pass
+
 if not GPIO_AVAILABLE:
-    try:
-        from gpiozero import Button
-        ac_button = Button(AC_GPIO, pull_up=False)
-        GPIO_AVAILABLE = True
-        print("✅ GPIO initialized successfully using gpiozero")
-    except ImportError:
-        print("⚠️ gpiozero not available")
-    except Exception as e:
-        print(f"⚠️ GPIO initialization failed: {e}")
+    if IS_PI5:
+        print("⚠️ gpiozero not supported on Pi 5, skipping GPIO")
+    else:
+        try:
+            from gpiozero import Button
+            ac_button = Button(AC_GPIO, pull_up=False)
+            GPIO_AVAILABLE = True
+            print("✅ GPIO initialized successfully using gpiozero")
+        except ImportError:
+            print("⚠️ gpiozero not available")
+        except Exception as e:
+            print(f"⚠️ GPIO initialization failed: {e}")
 
 bus = SMBus(BUS)
 
