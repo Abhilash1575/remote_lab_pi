@@ -153,6 +153,7 @@ sudo apt install -y \
     libasound2-dev \
     libjpeg-dev \
     libevent-dev \
+    libbsd-dev \
     esptool \
     avrdude \
     openocd \
