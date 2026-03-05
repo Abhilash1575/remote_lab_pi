@@ -42,9 +42,11 @@ sudo apt update
 sudo apt install -y \
     i2c-tools \
     python3-smbus \
-    python3-pip
+    python3-pip \
+    python3-rpi-lgpio \
+    python3-gpiozero
 
-pip3 install --break-system-packages smbus2 RPi.GPIO
+pip3 install --break-system-packages smbus2
 
 echo "✅ Packages installed"
 

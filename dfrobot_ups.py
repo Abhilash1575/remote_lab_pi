@@ -12,55 +12,11 @@ from datetime import datetime, timedelta
 BUS = 1
 ADDR = 0x36        # MAX17048
 
-# Try to import GPIO module - try lgpio first (used in main app), then gpiozero
-GPIO_AVAILABLE = False
-LGPIO_AVAILABLE = False
-AC_GPIO = 12  # GPIO12 = AC present (GPIO4,5,6 reserved on Pi 5)
-lgpio_handle = None
-
-try:
-    import lgpio
-    LGPIO_AVAILABLE = True
-    lgpio_handle = lgpio.gpiochip_open(0)
-    try:
-        lgpio.gpio_claim_input(lgpio_handle, AC_GPIO)
-        GPIO_AVAILABLE = True
-        print("✅ LGPIO initialized successfully")
-    except Exception as e:
-        # Try alternative - use LOWER attribute for pull-up
-        try:
-            lgpio_handle = lgpio.gpiochip_open(0)
-            lgpio.gpio_claim_input(lgpio_handle, AC_GPIO, lgpio.LOW)
-            GPIO_AVAILABLE = True
-            print("✅ LGPIO initialized successfully (with pull-down)")
-        except Exception as e2:
-            print(f"⚠️ LGPIO GPIO claim failed: {e2}")
-except ImportError:
-    print("⚠️ lgpio not available")
-except Exception as e:
-    print(f"⚠️ LGPIO initialization failed: {e}")
-
-# Fallback to gpiozero if lgpio fails (but not on Pi 5 - gpiozero doesn't support it)
-IS_PI5 = False
-try:
-    with open("/proc/device-tree/model", "r") as f:
-        IS_PI5 = "Pi 5" in f.read()
-except:
-    pass
-
-if not GPIO_AVAILABLE:
-    if IS_PI5:
-        print("⚠️ gpiozero not supported on Pi 5, skipping GPIO")
-    else:
-        try:
-            from gpiozero import Button
-            ac_button = Button(AC_GPIO, pull_up=False)
-            GPIO_AVAILABLE = True
-            print("✅ GPIO initialized successfully using gpiozero")
-        except ImportError:
-            print("⚠️ gpiozero not available")
-        except Exception as e:
-            print(f"⚠️ GPIO initialization failed: {e}")
+# Track voltage for trend detection (Raspberry Pi 5 GPIO not working)
+voltage_history = []
+VOLTAGE_HISTORY_SIZE = 5  # Track last 5 readings
+last_voltage = None
+last_ac_status = "UNKNOWN"
 
 bus = SMBus(BUS)
 
@@ -105,45 +61,33 @@ def read_voltage():
         raise ValueError(f"Invalid voltage value: {voltage}")
     return voltage
 
-def ac_status():
-    if not GPIO_AVAILABLE:
-        return "UNKNOWN"  # No GPIO available
+def ac_status(voltage):
+    """
+    Detect AC status based on voltage trend since Raspberry Pi 5 GPIO isn't working.
+    When AC is connected: voltage stays stable or increases slightly
+    When AC is disconnected: voltage decreases steadily
+    """
+    global voltage_history, last_voltage, last_ac_status
     
-    try:
-        # Use lgpio if available
-        if LGPIO_AVAILABLE and lgpio_handle:
-            try:
-                value = lgpio.gpio_read(lgpio_handle, AC_GPIO)
-                # lgpio.gpio_read returns an integer or tuple
-                # If level is 1, AC is connected (pin pulled high)
-                if isinstance(value, tuple):
-                    level = value[0]
-                else:
-                    level = value
-                return "AC_CONNECTED" if level == 1 else "ON_BATTERY"
-            except lgpio.error as e:
-                # GPIO might be busy, try to re-claim and read
-                if "not allocated" in str(e) or "busy" in str(e):
-                    try:
-                        lgpio.gpio_free(lgpio_handle, AC_GPIO)
-                        lgpio.gpio_claim_input(lgpio_handle, AC_GPIO)
-                        value = lgpio.gpio_read(lgpio_handle, AC_GPIO)
-                        if isinstance(value, tuple):
-                            level = value[0]
-                        else:
-                            level = value
-                        return "AC_CONNECTED" if level == 1 else "ON_BATTERY"
-                    except:
-                        return "UNKNOWN"
-                raise
+    # Add current voltage to history
+    voltage_history.append(voltage)
+    if len(voltage_history) > VOLTAGE_HISTORY_SIZE:
+        voltage_history.pop(0)
+    
+    # If we have enough data, analyze the trend
+    if len(voltage_history) == VOLTAGE_HISTORY_SIZE:
+        # Calculate average voltage change per reading
+        total_change = voltage_history[-1] - voltage_history[0]
+        avg_change = total_change / (VOLTAGE_HISTORY_SIZE - 1)
         
-        # Fallback to gpiozero
-        from gpiozero import Button
-        ac_button = Button(AC_GPIO, pull_up=False)
-        return "AC_CONNECTED" if ac_button.is_pressed else "ON_BATTERY"
-    except Exception as e:
-        print(f"⚠️ GPIO read error: {e}")
-        return "UNKNOWN"
+        # Determine AC status based on voltage trend
+        # If voltage is increasing or stable (very small decrease), AC is connected
+        if avg_change >= -0.001:
+            last_ac_status = "AC_CONNECTED"
+        else:
+            last_ac_status = "ON_BATTERY"
+    
+    return last_ac_status
 
 def charging_status(ac, voltage):
     """
@@ -260,8 +204,11 @@ def main():
             elif not i2c_success:
                 print("⚠️ Skipping battery check - I2C communication issue")
             
-            # Get AC status (works even if I2C fails)
-            ac = ac_status()
+            # Get AC status based on voltage trend
+            if voltage is not None and voltage > 0:
+                ac = ac_status(voltage)
+            else:
+                ac = "UNKNOWN"
             
             # Only get charging status if we have valid voltage
             if voltage is not None and voltage > 0:
