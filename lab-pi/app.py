@@ -8,13 +8,30 @@ env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__
 load_dotenv(env_path)
 
 # Import lgpio FIRST before eventlet patches anything!
+# Try multiple GPIO libraries as fallback
 try:
     import lgpio
     RELAY_PIN = 26
+    GPIO_MODE = "lgpio"
 except Exception as e:
     print(f"lgpio import failed: {e}")
     lgpio = None
     RELAY_PIN = None
+    GPIO_MODE = None
+
+# Try gpiod as fallback
+try:
+    import gpiod
+    GPIO_MODE = GPIO_MODE or "gpiod"
+except:
+    gpiod = None
+
+# Try RPi.GPIO as another fallback
+try:
+    import RPi.GPIO as GPIO
+    GPIO_MODE = GPIO_MODE or "rpi"
+except:
+    GPIO = None
 
 import eventlet
 eventlet.monkey_patch()
@@ -289,23 +306,61 @@ heartbeat_thread = None
 # ---------- RELAY CONTROL ----------
 # Keep a persistent handle to GPIO chip to prevent issues with repeated calls
 gpio_handle = None
+chip = None
+line = None  # For gpiod
 
 def init_gpio():
     """Initialize GPIO chip handle"""
-    global gpio_handle
-    if lgpio is None or RELAY_PIN is None:
-        print("[ERROR] init_gpio: lgpio or RELAY_PIN is None")
+    global gpio_handle, chip, line, GPIO_MODE
+    
+    # If already initialized, return success
+    if GPIO_MODE == "lgpio" and gpio_handle is not None:
+        return True
+    if GPIO_MODE == "gpiod" and chip is not None:
+        return True
+    if GPIO_MODE == "rpi" and GPIO is not None:
+        return True
+    
+    if RELAY_PIN is None:
+        print("[ERROR] init_gpio: RELAY_PIN is None")
         return False
-    try:
-        if gpio_handle is None:
+    
+    # Try lgpio first
+    if lgpio is not None:
+        try:
             gpio_handle = lgpio.gpiochip_open(0)
             lgpio.gpio_claim_output(gpio_handle, RELAY_PIN)
-            print(f"[GPIO] Initialized - Pin {RELAY_PIN} configured as output")
-        return True
-    except Exception as e:
-        print(f"[ERROR] init_gpio: {e}")
-        gpio_handle = None
-        return False
+            GPIO_MODE = "lgpio"
+            print(f"[GPIO] Initialized with lgpio - Pin {RELAY_PIN}")
+            return True
+        except Exception as e:
+            print(f"[GPIO] lgpio failed: {e}")
+    
+    # Try gpiod second
+    if gpiod is not None:
+        try:
+            chip = gpiod.Chip("gpiochip0")
+            line = chip.get_line(RELAY_PIN)
+            line.request(consumer="lab-pi", type=gpiod.LINE_REQ_DIR_OUT)
+            GPIO_MODE = "gpiod"
+            print(f"[GPIO] Initialized with gpiod - Pin {RELAY_PIN}")
+            return True
+        except Exception as e:
+            print(f"[GPIO] gpiod failed: {e}")
+    
+    # Try RPi.GPIO as last resort
+    if GPIO is not None:
+        try:
+            GPIO.setmode(GPIO.BCM)
+            GPIO.setup(RELAY_PIN, GPIO.OUT)
+            GPIO_MODE = "rpi"
+            print(f"[GPIO] Initialized with RPi.GPIO - Pin {RELAY_PIN}")
+            return True
+        except Exception as e:
+            print(f"[GPIO] RPi.GPIO failed: {e}")
+    
+    print("[ERROR] init_gpio: No GPIO library available")
+    return False
 
 def relay_on():
     """Turn the relay ON (power supply to experiments)"""
@@ -313,7 +368,12 @@ def relay_on():
         print("[ERROR] relay_on: GPIO init failed")
         return False
     try:
-        lgpio.gpio_write(gpio_handle, RELAY_PIN, 0)  # Most relay modules are ACTIVE LOW
+        if GPIO_MODE == "lgpio":
+            lgpio.gpio_write(gpio_handle, RELAY_PIN, 0)  # ACTIVE LOW
+        elif GPIO_MODE == "gpiod":
+            line.set_value(0)  # ACTIVE LOW
+        elif GPIO_MODE == "rpi":
+            GPIO.output(RELAY_PIN, GPIO.LOW)  # ACTIVE LOW
         print("[RELAY] ON - Power supply enabled")
         return True
     except Exception as e:
@@ -326,7 +386,12 @@ def relay_off():
         print("[ERROR] relay_off: GPIO init failed")
         return False
     try:
-        lgpio.gpio_write(gpio_handle, RELAY_PIN, 1)  # Most relay modules are ACTIVE LOW
+        if GPIO_MODE == "lgpio":
+            lgpio.gpio_write(gpio_handle, RELAY_PIN, 1)  # ACTIVE LOW
+        elif GPIO_MODE == "gpiod":
+            line.set_value(1)  # ACTIVE LOW
+        elif GPIO_MODE == "rpi":
+            GPIO.output(RELAY_PIN, GPIO.HIGH)  # ACTIVE LOW
         print("[RELAY] OFF - Power supply disabled")
         return True
     except Exception as e:
