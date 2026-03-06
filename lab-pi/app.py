@@ -33,6 +33,9 @@ try:
 except:
     GPIO = None
 
+# Try gpio utility as last resort (always available on RPi)
+import subprocess
+
 import eventlet
 eventlet.monkey_patch()
 
@@ -361,6 +364,17 @@ def init_gpio():
         except Exception as e:
             print(f"[GPIO] RPi.GPIO failed: {e}")
     
+    # Try gpio utility (shell command) as final fallback
+    try:
+        result = subprocess.run(['gpio', '-g', 'mode', str(RELAY_PIN), 'out'], 
+                              capture_output=True, timeout=5)
+        if result.returncode == 0:
+            GPIO_MODE = "shell"
+            print(f"[GPIO] ✓ Initialized with gpio shell - Pin {RELAY_PIN}")
+            return True
+    except Exception as e:
+        print(f"[GPIO] gpio shell failed: {e}")
+    
     print("[ERROR] init_gpio: No GPIO library available or all failed")
     return False
 
@@ -376,6 +390,8 @@ def relay_on():
             line.set_value(0)  # ACTIVE LOW
         elif GPIO_MODE == "rpi":
             GPIO.output(RELAY_PIN, GPIO.LOW)  # ACTIVE LOW
+        elif GPIO_MODE == "shell":
+            subprocess.run(['gpio', '-g', 'write', str(RELAY_PIN), '0'], check=True)
         print("[RELAY] ON - Power supply enabled")
         return True
     except Exception as e:
@@ -394,6 +410,8 @@ def relay_off():
             line.set_value(1)  # ACTIVE LOW
         elif GPIO_MODE == "rpi":
             GPIO.output(RELAY_PIN, GPIO.HIGH)  # ACTIVE LOW
+        elif GPIO_MODE == "shell":
+            subprocess.run(['gpio', '-g', 'write', str(RELAY_PIN), '1'], check=True)
         print("[RELAY] OFF - Power supply disabled")
         return True
     except Exception as e:
