@@ -325,13 +325,15 @@ def init_gpio():
         print("[ERROR] init_gpio: RELAY_PIN is None")
         return False
     
+    print(f"[GPIO] Trying to initialize GPIO (RELAY_PIN={RELAY_PIN})...")
+    
     # Try lgpio first
     if lgpio is not None:
         try:
             gpio_handle = lgpio.gpiochip_open(0)
             lgpio.gpio_claim_output(gpio_handle, RELAY_PIN)
             GPIO_MODE = "lgpio"
-            print(f"[GPIO] Initialized with lgpio - Pin {RELAY_PIN}")
+            print(f"[GPIO] ✓ Initialized with lgpio - Pin {RELAY_PIN}")
             return True
         except Exception as e:
             print(f"[GPIO] lgpio failed: {e}")
@@ -343,7 +345,7 @@ def init_gpio():
             line = chip.get_line(RELAY_PIN)
             line.request(consumer="lab-pi", type=gpiod.LINE_REQ_DIR_OUT)
             GPIO_MODE = "gpiod"
-            print(f"[GPIO] Initialized with gpiod - Pin {RELAY_PIN}")
+            print(f"[GPIO] ✓ Initialized with gpiod - Pin {RELAY_PIN}")
             return True
         except Exception as e:
             print(f"[GPIO] gpiod failed: {e}")
@@ -354,12 +356,12 @@ def init_gpio():
             GPIO.setmode(GPIO.BCM)
             GPIO.setup(RELAY_PIN, GPIO.OUT)
             GPIO_MODE = "rpi"
-            print(f"[GPIO] Initialized with RPi.GPIO - Pin {RELAY_PIN}")
+            print(f"[GPIO] ✓ Initialized with RPi.GPIO - Pin {RELAY_PIN}")
             return True
         except Exception as e:
             print(f"[GPIO] RPi.GPIO failed: {e}")
     
-    print("[ERROR] init_gpio: No GPIO library available")
+    print("[ERROR] init_gpio: No GPIO library available or all failed")
     return False
 
 def relay_on():
@@ -551,6 +553,31 @@ def api_lab_pi_session_end():
         print(f"[Session] Ended: {session_key}")
     
     return jsonify({'status': 'success'})
+
+@app.route('/test_gpio', methods=['GET'])
+def test_gpio():
+    """Test GPIO initialization and return debug info"""
+    debug_info = {
+        'lgpio_available': lgpio is not None,
+        'gpiod_available': gpiod is not None,
+        'rpi_gpio_available': GPIO is not None,
+        'relay_pin': RELAY_PIN,
+        'gpio_mode': GPIO_MODE,
+        'gpio_handle': gpio_handle is not None,
+        'chip': chip is not None
+    }
+    
+    # Try to initialize GPIO
+    init_result = init_gpio()
+    debug_info['init_result'] = init_result
+    debug_info['gpio_mode'] = GPIO_MODE
+    
+    # Try to turn on relay
+    if init_result:
+        relay_on()
+        relay_off()
+    
+    return jsonify(debug_info)
 
 @app.route('/toggle_relay', methods=['POST'])
 def toggle_relay():
