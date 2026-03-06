@@ -572,8 +572,8 @@ def flash():
     # This avoids PATH issues and ensures we use the correct esptool
     python_exec = sys.executable
     commands = {
-        'esp32': f"{python_exec} -m esptool --chip esp32 --port {port} --baud 921600 write_flash 0x10000 {dest}",
-        'esp8266': f"{python_exec} -m esptool --chip esp8266 --port {port} --baud 921600 write_flash 0x00000 {dest}",
+        'esp32': f"{python_exec} -m esptool --chip esp32 --port {port} --baud 115200 --before default-reset write-flash 0x10000 {dest}",
+        'esp8266': f"{python_exec} -m esptool --chip esp8266 --port {port} --baud 115200 --before default-reset write-flash 0x00000 {dest}",
         'arduino': f"avrdude -v -p atmega328p -c arduino -P {port} -b115200 -D -U flash:w:{dest}:i",
         'attiny': f"avrdude -v -p attiny85 -c usbasp -P {port} -U flash:w:{dest}:i",
         'stm32': f"openocd -f interface/stlink.cfg -f target/stm32f4x.cfg -c \"program {dest} 0x08000000 verify reset exit\"",
@@ -643,8 +643,8 @@ def factory_reset():
     # Use sys.executable to ensure we use the venv's Python (which has esptool installed)
     python_exec = sys.executable
     commands = {
-        'esp32': f"{python_exec} -m esptool --chip esp32 --port {port} --baud 921600 write_flash 0x10000 {fpath}",
-        'esp8266': f"{python_exec} -m esptool --chip esp8266 --port {port} --baud 921600 write_flash 0x00000 {fpath}",
+        'esp32': f"{python_exec} -m esptool --chip esp32 --port {port} --baud 115200 --before default-reset write-flash 0x10000 {fpath}",
+        'esp8266': f"{python_exec} -m esptool --chip esp8266 --port {port} --baud 115200 --before default-reset write-flash 0x00000 {fpath}",
         'arduino': f"avrdude -v -p atmega328p -c arduino -P {port} -b115200 -D -U flash:w:{fpath}:i",
         'attiny': f"avrdude -v -p attiny85 -c usbasp -P {port} -U flash:w:{fpath}:i",
         'stm32': f"openocd -f interface/stlink.cfg -f target/stm32f4x.cfg -c \"program {fpath} 0x08000000 verify reset exit\"",

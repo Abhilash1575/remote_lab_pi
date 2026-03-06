@@ -1,8 +1,9 @@
-#!/usr/bin/env python3
+#!/usr/env/env python3
 import time
 from smbus2 import SMBus
 import csv
 import os
+import subprocess
 from datetime import datetime, timedelta
 
 # ===============================
@@ -12,11 +13,168 @@ from datetime import datetime, timedelta
 BUS = 1
 ADDR = 0x36        # MAX17048
 
-# Track voltage for trend detection (Raspberry Pi 5 GPIO not working)
-voltage_history = []
-VOLTAGE_HISTORY_SIZE = 5  # Track last 5 readings
-last_voltage = None
-last_ac_status = "UNKNOWN"
+# GPIO Configuration for AC Power Detection
+GPIO_AVAILABLE = False
+AC_GPIO = 6  # GPIO6 = AC present (PLD pin on DFRobot UPS)
+
+# Try to use gpiod Python bindings first
+try:
+    import gpiod
+    try:
+        # Use gpiod request_lines method (like in the sample dfrobot code)
+        request = gpiod.request_lines(
+            '/dev/gpiochip0',
+            consumer="DFRobot_UPS",
+            config={
+                AC_GPIO: gpiod.LineSettings(direction=gpiod.line.Direction.INPUT)
+            }
+        )
+        GPIO_AVAILABLE = True
+        print("✅ GPGPIO (gpiod) initialized successfully for AC detection")
+        
+        def ac_status():
+            """Read AC status using gpiod"""
+            values = request.get_values()
+            value = values[AC_GPIO] if isinstance(values, dict) else values[0]
+            return "AC_CONNECTED" if value == gpiod.line.Value.ACTIVE else "ON_BATTERY"
+            
+    except Exception as e:
+        print(f"⚠️ GPGPIO line claim failed: {e}")
+        request = None
+except ImportError:
+    print("⚠️ gpiod not available")
+    request = None
+except Exception as e:
+    print(f"⚠️ GPGPIO initialization failed: {e}")
+    request = None
+
+# If gpiod doesn't work, use subprocess to call gpioget command
+# This requires the service to run with sudo privileges
+GPIOGET_AVAILABLE = False
+if not GPIO_AVAILABLE:
+    try:
+        # Test if we can run gpioget
+        result = subprocess.run(
+            ['sudo', 'gpioget', '-c', 'gpiochip0', str(AC_GPIO)],
+            capture_output=True,
+            text=True,
+            timeout=2
+        )
+        if result.returncode == 0:
+            GPIOGET_AVAILABLE = True
+            print("✅ Using gpioget subprocess for AC detection")
+        else:
+            print(f"⚠️ gpioget test failed: {result.stderr}")
+    except FileNotFoundError:
+        print("⚠️ gpioget command not found")
+    except Exception as e:
+        print(f"⚠️ gpioget subprocess setup failed: {e}")
+
+# Fallback to lgpio if gpiod fails
+LGPIO_AVAILABLE = False
+lgpio_handle = None
+if not GPIO_AVAILABLE:
+    try:
+        import lgpio
+        LGPIO_AVAILABLE = True
+        lgpio_handle = lgpio.gpiochip_open(0)
+        try:
+            lgpio.gpio_claim_input(lgpio_handle, AC_GPIO)
+            GPIO_AVAILABLE = True
+            print("✅ LGPIO initialized successfully as fallback")
+        except Exception as e:
+            # Try alternative claim method
+            try:
+                lgpio_handle = lgpio.gpiochip_open(0)
+                lgpio.gpio_claim_input(lgpio_handle, AC_GPIO, lgpio.SET_BIAS_DISABLE)
+                GPIO_AVAILABLE = True
+                print("✅ LGPIO initialized successfully (with bias)")
+            except Exception as e2:
+                print(f"⚠️ LGPIO GPIO claim failed: {e2}")
+                # Try gpioget as fallback
+                try:
+                    result = subprocess.run(
+                        ['sudo', 'gpioget', '-c', 'gpiochip0', str(AC_GPIO)],
+                        capture_output=True,
+                        text=True,
+                        timeout=2
+                    )
+                    if result.returncode == 0:
+                        GPIO_AVAILABLE = True
+                        print("✅ Using gpioget subprocess for AC detection (fallback)")
+                    else:
+                        print(f"⚠️ gpioget fallback failed: {result.stderr}")
+                except Exception as ge:
+                    print(f"⚠️ gpioget fallback setup failed: {ge}")
+    except ImportError:
+        print("⚠️ lgpio not available")
+    except Exception as e:
+        print(f"⚠️ LGPIO initialization failed: {e}")
+
+# Fallback to gpiozero if lgpio doesn't work
+ac_button = None
+if not GPIO_AVAILABLE:
+    try:
+        from gpiozero import Button
+        ac_button = Button(AC_GPIO, pull_up=False)
+        GPIO_AVAILABLE = True
+        print("✅ GPIO initialized successfully using gpiozero as fallback")
+    except ImportError:
+        print("⚠️ gpiozero not available")
+        # Try gpioget as fallback
+        try:
+            result = subprocess.run(
+                ['sudo', 'gpioget', '-c', 'gpiochip0', str(AC_GPIO)],
+                capture_output=True,
+                text=True,
+                timeout=2
+            )
+            if result.returncode == 0:
+                GPIO_AVAILABLE = True
+                print("✅ Using gpioget subprocess for AC detection (final fallback)")
+            else:
+                print(f"⚠️ gpioget fallback failed: {result.stderr}")
+    except Exception as e:
+        print(f"⚠️ GPIO initialization failed: {e}")
+        # Try gpioget as fallback
+        try:
+            result = subprocess.run(
+                ['sudo', 'gpioget', '-c', 'gpiochip0', str(AC_GPIO)],
+                capture_output=True,
+                text=True,
+                timeout=2
+            )
+            if result.returncode == 0:
+                GPIO_AVAILABLE = True
+                print("✅ Using gpioget subprocess for AC detection (final fallback)")
+            else:
+                print(f"⚠️ gpioget fallback failed: {result.stderr}")
+        except Exception as ge:
+            print(f"⚠️ gpioget fallback setup failed: {ge}")
+
+# Final fallback: Use sysfs (legacy GPIO)
+SYSFS_GPIO_AVAILABLE = False
+SYSFS_GPIO_PATH = f"/sys/class/gpio/gpio{AC_GPIO}"
+if not GPIO_AVAILABLE:
+    try:
+        # Try to export GPIO if not already exported
+        if not os.path.exists(SYSFS_GPIO_PATH):
+            with open('/sys/class/gpio/export', 'w') as f:
+                f.write(str(AC_GPIO))
+            # Wait for sysfs to create the directory
+            time.sleep(0.5)
+        
+        if os.path.exists(SYSFS_GPIO_PATH):
+            # Set direction to input
+            with open(f'{SYSFS_GPIO_PATH}/direction', 'w') as f:
+                f.write('in')
+            SYSFS_GPIO_AVAILABLE = True
+            GPIO_AVAILABLE = True
+            print("✅ Sysfs GPIO initialized successfully as final fallback")
+        else:
+            print("⚠️ Failed to create sysfs GPIO entry")
+    except Exception as e:
+        print(f"⚠️ Sysfs GPIO initialization failed: {e}")
 
 bus = SMBus(BUS)
 
@@ -61,33 +219,77 @@ def read_voltage():
         raise ValueError(f"Invalid voltage value: {voltage}")
     return voltage
 
-def ac_status(voltage):
+def ac_status():
     """
-    Detect AC status based on voltage trend since Raspberry Pi 5 GPIO isn't working.
-    When AC is connected: voltage stays stable or increases slightly
-    When AC is disconnected: voltage decreases steadily
+    Read AC power status using GPIO pin.
+    GPIO6 (PLD pin) - HIGH when AC connected, LOW when on battery.
+    Uses gpiod Python bindings, gpioget subprocess, lgpio, gpiozero, or sysfs as fallback.
     """
-    global voltage_history, last_voltage, last_ac_status
+    if not GPIO_AVAILABLE:
+        return "UNKNOWN"  # No GPIO available
     
-    # Add current voltage to history
-    voltage_history.append(voltage)
-    if len(voltage_history) > VOLTAGE_HISTORY_SIZE:
-        voltage_history.pop(0)
-    
-    # If we have enough data, analyze the trend
-    if len(voltage_history) == VOLTAGE_HISTORY_SIZE:
-        # Calculate average voltage change per reading
-        total_change = voltage_history[-1] - voltage_history[0]
-        avg_change = total_change / (VOLTAGE_HISTORY_SIZE - 1)
+    try:
+        # Use gpiod Python bindings if available
+        if 'request' in globals() and request is not None:
+            try:
+                values = request.get_values()
+                value = values[AC_GPIO] if isinstance(values, dict) else values[0]
+                return "AC_CONNECTED" if value == gpiod.line.Value.ACTIVE else "ON_BATTERY"
+            except Exception as e:
+                print(f"⚠️ gpiod read error: {e}")
         
-        # Determine AC status based on voltage trend
-        # If voltage is increasing or stable (very small decrease), AC is connected
-        if avg_change >= -0.001:
-            last_ac_status = "AC_CONNECTED"
-        else:
-            last_ac_status = "ON_BATTERY"
-    
-    return last_ac_status
+        # Try gpioget subprocess (if we defined ac_status_gpioget)
+        if 'ac_status_gpioget' in globals():
+            return ac_status_gpioget()
+        
+        # Fallback to lgpio
+        if LGPIO_AVAILABLE and lgpio_handle:
+            try:
+                value = lgpio.gpio_read(lgpio_handle, AC_GPIO)
+                # lgpio.gpio_read returns an integer or tuple
+                # If level is 1, AC is connected (pin pulled high)
+                if isinstance(value, tuple):
+                    level = value[0]
+                else:
+                    level = value
+                return "AC_CONNECTED" if level == 1 else "ON_BATTERY"
+            except lgpio.error as e:
+                # GPIO might be busy, try to re-claim and read
+                if "not allocated" in str(e) or "busy" in str(e):
+                    try:
+                        lgpio.gpio_free(lgpio_handle, AC_GPIO)
+                        lgpio.gpio_claim_input(lgpio_handle, AC_GPIO)
+                        value = lgpio.gpio_read(lgpio_handle, AC_GPIO)
+                        if isinstance(value, tuple):
+                            level = value[0]
+                        else:
+                            level = value
+                        return "AC_CONNECTED" if level == 1 else "ON_BATTERY"
+                    except:
+                        return "UNKNOWN"
+                raise
+        
+        # Fallback to gpiozero
+        if ac_button is not None:
+            return "AC_CONNECTED" if ac_button.is_pressed else "ON_BATTERY"
+        
+        # Fallback to sysfs (legacy GPIO)
+        if SYSFS_GPIO_AVAILABLE:
+            try:
+                with open(f'{SYSFS_GPIO_PATH}/value', 'r') as f:
+                    value = int(f.read().strip())
+                return "AC_CONNECTED" if value == 1 else "ON_BATTERY"
+            except Exception as e:
+                print(f"⚠️ Sysfs GPIO read error: {e}")
+                return "UNKNOWN"
+            
+    except Exception as e:
+        print(f"⚠️ GPIO read error: {e}")
+        return "UNKNOWN"
+
+    return "UNKNOWN"
+
+    return "UNKNOWN"
 
 def charging_status(ac, voltage):
     """
@@ -204,11 +406,8 @@ def main():
             elif not i2c_success:
                 print("⚠️ Skipping battery check - I2C communication issue")
             
-            # Get AC status based on voltage trend
-            if voltage is not None and voltage > 0:
-                ac = ac_status(voltage)
-            else:
-                ac = "UNKNOWN"
+            # Get AC status (works even if I2C fails)
+            ac = ac_status()
             
             # Only get charging status if we have valid voltage
             if voltage is not None and voltage > 0:
@@ -244,5 +443,42 @@ def main():
         
         time.sleep(5)
 
+def cleanup():
+    """Clean up GPIO resources on exit"""
+    global ac_line, gpiochip, lgpio_handle
+    
+    print("Cleaning up GPIO resources...")
+    
+    # Release gpiod resources
+    if ac_line is not None:
+        try:
+            ac_line.release()
+            print("✅ Released gpiod line")
+        except Exception as e:
+            print(f"⚠️ Error releasing gpiod line: {e}")
+    
+    if gpiochip is not None:
+        try:
+            gpiochip.close()
+            print("✅ Closed gpiod chip")
+        except Exception as e:
+            print(f"⚠️ Error closing gpiod chip: {e}")
+    
+    # Release lgpio resources
+    if lgpio_handle is not None:
+        try:
+            lgpio.gpio_free(lgpio_handle, AC_GPIO)
+            lgpio.gpiochip_close(lgpio_handle)
+            print("✅ Released lgpio resources")
+        except Exception as e:
+            print(f"⚠️ Error releasing lgpio resources: {e}")
+    
+    print("Cleanup complete")
+
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\n⚠️ Interrupted by user")
+    finally:
+        cleanup()
