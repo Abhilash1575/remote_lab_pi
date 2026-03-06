@@ -488,7 +488,7 @@ def experiment():
     for k in expired_keys:
         del active_sessions[k]
         # Turn relay OFF when session expires
-        relay_off()
+        subprocess.run(['python3', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'relay_control.py'), 'off'], capture_output=True)
 
     # If session doesn't exist but we have session_end_time param, create it
     if session_key not in active_sessions and session_end_time_param:
@@ -634,31 +634,35 @@ def test_gpio():
 
 @app.route('/toggle_relay', methods=['POST'])
 def toggle_relay():
-    """Toggle the relay ON or OFF based on request data"""
+    """Toggle the relay ON or OFF using external script"""
     data = request.get_json()
     state = data.get('state')
     session_key = data.get('session_key')
-    bypass_auth = data.get('bypass', False)  # Allow bypass for testing
+    bypass_auth = data.get('bypass', False)
     
-    # Check if session is valid (skip if bypass is true)
+    # Check if session is valid
     if not bypass_auth and session_key not in active_sessions:
-        # Try to proceed anyway for manual testing - just log a warning
         print(f"[WARNING] toggle_relay called without valid session: {session_key}")
     
-    if state == 'on':
-        success = relay_on()
-        if not success:
-            print("[ERROR] Failed to turn relay ON - check GPIO connections")
-            return jsonify({'status': 'error', 'message': 'Error turning power ON: GPIO initialization failed. Check if lgpio is installed and GPIO pins are available.'}), 500
-        return jsonify({'status': 'on'})
-    elif state == 'off':
-        success = relay_off()
-        if not success:
-            print("[ERROR] Failed to turn relay OFF - check GPIO connections")
-            return jsonify({'status': 'error', 'message': 'Error turning power OFF: GPIO initialization failed. Check if lgpio is installed and GPIO pins are available.'}), 500
-        return jsonify({'status': 'off'})
-    else:
+    if state not in ['on', 'off']:
         return jsonify({'status': 'error', 'message': 'Invalid state'}), 400
+    
+    # Call the relay control script
+    script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'relay_control.py')
+    try:
+        result = subprocess.run(
+            ['python3', script_path, state],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.returncode == 0:
+            print(f"[RELAY] {state.upper()} - {result.stdout.strip()}")
+            return jsonify({'status': state})
+        else:
+            print(f"[ERROR] relay {state} failed: {result.stderr}")
+            return jsonify({'status': 'error', 'message': f'Relay {state} failed: Check GPIO connection'}), 500
+    except Exception as e:
+        print(f"[ERROR] toggle_relay: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @app.route('/chart')
 def chart():
@@ -668,7 +672,7 @@ def chart():
     for k in expired_keys:
         del active_sessions[k]
         # Turn relay OFF when session expires
-        relay_off()
+        subprocess.run(['python3', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'relay_control.py'), 'off'], capture_output=True)
 
     session_key = request.args.get('key')
     if not session_key or session_key not in active_sessions:
@@ -683,7 +687,7 @@ def camera():
     for k in expired_keys:
         del active_sessions[k]
         # Turn relay OFF when session expires
-        relay_off()
+        subprocess.run(['python3', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'relay_control.py'), 'off'], capture_output=True)
 
     session_key = request.args.get('key')
     if not session_key or session_key not in active_sessions:
