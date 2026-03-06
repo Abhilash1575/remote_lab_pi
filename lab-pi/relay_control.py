@@ -8,7 +8,7 @@ import lgpio
 import sys
 import os
 
-RELAY_PIN = 26  # Your relay is connected to GPIO 26
+RELAY_PIN = 16  # Your relay is connected to GPIO 16
 
 def relay_on():
     """Turn the relay ON (power supply to experiments)"""
