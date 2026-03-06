@@ -316,8 +316,8 @@ def init_gpio():
     """Initialize GPIO chip handle"""
     global gpio_handle, chip, line, GPIO_MODE
     
-    # If already initialized, return success
-    if GPIO_MODE == "lgpio" and gpio_handle is not None:
+    # If already initialized and handle is valid, return success
+    if GPIO_MODE == "lgpio" and gpio_handle is not None and gpio_handle > 0:
         return True
     if GPIO_MODE == "gpiod" and chip is not None:
         return True
@@ -340,6 +340,7 @@ def init_gpio():
             return True
         except Exception as e:
             print(f"[GPIO] lgpio failed: {e}")
+            gpio_handle = None  # Reset on failure
     
     # Try gpiod second
     if gpiod is not None:
@@ -380,7 +381,22 @@ def init_gpio():
 
 def relay_on():
     """Turn the relay ON (power supply to experiments)"""
+    global gpio_handle, chip, line, GPIO_MODE
     print(f"[DEBUG] relay_on called, GPIO_MODE={GPIO_MODE}, gpio_handle={gpio_handle}")
+    
+    # Reset GPIO handle if it was busy or invalid
+    if GPIO_MODE == "lgpio":
+        try:
+            if gpio_handle:
+                try:
+                    lgpio.gpiochip_close(gpio_handle)
+                except:
+                    pass
+            gpio_handle = None
+            GPIO_MODE = None
+        except:
+            pass
+    
     if not init_gpio():
         print("[ERROR] relay_on: GPIO init failed")
         return False
@@ -402,9 +418,26 @@ def relay_on():
 
 def relay_off():
     """Turn the relay OFF (power supply to experiments off)"""
+    global gpio_handle, chip, line, GPIO_MODE
+    print(f"[DEBUG] relay_off called, GPIO_MODE={GPIO_MODE}, gpio_handle={gpio_handle}")
+    
+    # Reset GPIO handle if it was busy or invalid
+    if GPIO_MODE == "lgpio":
+        try:
+            if gpio_handle:
+                try:
+                    lgpio.gpiochip_close(gpio_handle)
+                except:
+                    pass
+            gpio_handle = None
+            GPIO_MODE = None
+        except:
+            pass
+    
     if not init_gpio():
         print("[ERROR] relay_off: GPIO init failed")
         return False
+    print(f"[DEBUG] After init_gpio, GPIO_MODE={GPIO_MODE}, gpio_handle={gpio_handle}")
     try:
         if GPIO_MODE == "lgpio":
             lgpio.gpio_write(gpio_handle, RELAY_PIN, 1)  # ACTIVE LOW
