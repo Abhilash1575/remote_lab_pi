@@ -211,16 +211,14 @@ def read_soc():
     except:
         pass
     
-    # If SOC is 0 but voltage is above threshold, calculate estimated SOC
-    # This handles cases where fuel gauge lost calibration
-    if soc <= 1 and voltage is not None and voltage > 3.5:
+    # If SOC is very low (<15%) and voltage is above 3.5V, use voltage-based estimation
+    # This handles cases where fuel gauge lost calibration or has wrong parameters
+    if soc < 15 and voltage is not None and voltage > 3.5:
         # Estimate SOC based on voltage (LiPo 3.0V-4.2V range)
-        # Only use this as fallback, log warning
         estimated_soc = ((voltage - 3.0) / 1.2) * 100
         estimated_soc = max(0, min(100, estimated_soc))  # Clamp to 0-100
-        print(f"⚠️ SOC read 0% but voltage is {voltage:.3f}V - estimated SOC: {estimated_soc:.1f}%")
-        # Return the estimated SOC instead of 0
-        return max(0.0, min(100.0, estimated_soc))
+        print(f"⚠️ Fuel gauge shows {soc:.1f}% but voltage is {voltage:.3f}V - using voltage-based estimate: {estimated_soc:.1f}%")
+        return round(estimated_soc, 2)
     
     # Validate - SOC should be between 0 and 100
     if soc < 0 or soc > 100:
