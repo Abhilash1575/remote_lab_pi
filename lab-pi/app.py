@@ -138,15 +138,26 @@ def send_heartbeat():
     charging = False
     
     try:
-        # Use the same path as dfrobot_ups.py
-        battery_file = "/home/amar/lab-pi/battery_status.json"
-        if not os.path.exists(battery_file):
-            # Fallback: try to detect the correct path
-            import subprocess
-            result = subprocess.run(['whoami'], capture_output=True, text=True)
-            user = result.stdout.strip()
-            battery_file = f"/home/{user}/lab-pi/battery_status.json"
-        if os.path.exists(battery_file):
+        # Use DYNAMIC path - detect user and project directory automatically
+        import subprocess
+        result = subprocess.run(['whoami'], capture_output=True, text=True)
+        current_user = result.stdout.strip()
+        
+        # Try both possible locations: ~/lab-pi/ and ~/admin-pi/
+        possible_paths = [
+            f"/home/{current_user}/lab-pi/battery_status.json",
+            f"/home/{current_user}/admin-pi/battery_status.json",
+            os.path.expanduser("~/lab-pi/battery_status.json"),
+            os.path.expanduser("~/admin-pi/battery_status.json")
+        ]
+        
+        battery_file = None
+        for path in possible_paths:
+            if os.path.exists(path):
+                battery_file = path
+                break
+        
+        if battery_file:
             with open(battery_file, 'r') as f:
                 battery_data = json.load(f)
                 battery_percent = battery_data.get('soc', 0)
@@ -155,6 +166,9 @@ def send_heartbeat():
                 charging_status = battery_data.get('charging_status', 'DISCHARGING')
                 ac_connected = (ac_status != 'ON_BATTERY')
                 charging = (charging_status == 'CHARGING')
+                print(f"[Heartbeat] Battery: {battery_percent}% ({battery_voltage}V) - {ac_status} - File: {battery_file}")
+        else:
+            print(f"[Heartbeat] Battery file not found in any location: {possible_paths}")
     except Exception as e:
         print(f"[Heartbeat] Error reading battery status: {e}")
     
