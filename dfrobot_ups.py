@@ -191,7 +191,7 @@ os.makedirs(f"{HOME_DIR}/{PROJECT_NAME}", exist_ok=True)
 # Battery thresholds
 WARNING_SOC = 20
 CRITICAL_SOC = 15
-SHUTDOWN_SOC = 10
+SHUTDOWN_SOC = 5
 
 # Shutdown flag to prevent multiple triggers
 shutdown_triggered = False
@@ -372,13 +372,13 @@ def battery_reminder(soc, voltage=None):
         return
     
     # If SOC is very low but we have voltage reading, check if it's a false reading
-    if soc <= SHUTDOWN_SOC and voltage is not None and voltage > 3.8:
+    if soc <= SHUTDOWN_SOC and voltage is not None and voltage > 3.2:
         # Voltage is above 3.8V, likely a fuel gauge issue - don't shutdown
         print(f"⚠️ SOC shows {soc}% but voltage is {voltage:.3f}V - possible fuel gauge error, skipping shutdown")
         return
     
     if soc <= SHUTDOWN_SOC:
-        print(f"🛑 SOC ≤ 10% ({voltage:.3f}V if available) - Initiating graceful shutdown")
+        print(f"🛑 SOC ≤ 5% ({voltage:.3f}V if available) - Initiating graceful shutdown")
         shutdown_triggered = True
         # Give time for logs to flush
         time.sleep(5)
