@@ -138,9 +138,14 @@ def send_heartbeat():
     charging = False
     
     try:
-        # Dynamic path - works with any username
-        project_name = os.path.basename(os.path.dirname(os.path.abspath(__file__)))
-        battery_file = f"/home/{os.environ.get('USER', 'abhi')}/{project_name}/battery_status.json"
+        # Use the same path as dfrobot_ups.py
+        battery_file = "/home/amar/lab-pi/battery_status.json"
+        if not os.path.exists(battery_file):
+            # Fallback: try to detect the correct path
+            import subprocess
+            result = subprocess.run(['whoami'], capture_output=True, text=True)
+            user = result.stdout.strip()
+            battery_file = f"/home/{user}/lab-pi/battery_status.json"
         if os.path.exists(battery_file):
             with open(battery_file, 'r') as f:
                 battery_data = json.load(f)

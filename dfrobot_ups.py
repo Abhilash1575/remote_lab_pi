@@ -182,7 +182,7 @@ PROJECT_NAME = os.path.basename(SCRIPT_DIR)  # "admin-pi" or "lab-pi"
 HOME_DIR = os.path.expanduser("~")  # Get home directory dynamically
 LOG_FILE = f"{HOME_DIR}/{PROJECT_NAME}/ups_log.csv"
 BATTERY_STATUS_FILE = f"{HOME_DIR}/{PROJECT_NAME}/battery_status.json"
-LOG_INTERVAL = 30  # seconds
+LOG_INTERVAL = 10  # seconds - updated more frequently for real-time battery status
 LOG_RETENTION = 6 * 3600  # 6 hours in seconds
 
 # Ensure log directory exists
@@ -332,7 +332,8 @@ def log_data(soc, voltage, ac, chg):
     import json
     global LOG_RETENTION
     
-    # Write battery status to JSON file for Lab Pi to read
+    # Write battery status to JSON file for Lab Pi to read (update every time)
+    # This is separate from CSV logging - we want real-time battery status
     try:
         battery_data = {
             'soc': round(soc, 2) if soc else 0,
