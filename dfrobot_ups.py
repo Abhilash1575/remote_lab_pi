@@ -32,11 +32,6 @@ try:
         GPIO_AVAILABLE = True
         print("✅ GPGPIO (gpiod) initialized successfully for AC detection")
         
-        def ac_status():
-            """Read AC status using gpiod"""
-            values = request.get_values()
-            value = values[AC_GPIO] if isinstance(values, dict) else values[0]
-            return "AC_CONNECTED" if value == gpiod.line.Value.ACTIVE else "ON_BATTERY"
             
     except Exception as e:
         print(f"⚠️ GPGPIO line claim failed: {e}")
@@ -134,6 +129,8 @@ if not GPIO_AVAILABLE:
                 print("✅ Using gpioget subprocess for AC detection (final fallback)")
             else:
                 print(f"⚠️ gpioget fallback failed: {result.stderr}")
+        except Exception as ge:
+            print(f"⚠️ gpioget fallback setup failed: {ge}")
     except Exception as e:
         print(f"⚠️ GPIO initialization failed: {e}")
         # Try gpioget as fallback
@@ -178,14 +175,18 @@ if not GPIO_AVAILABLE:
 
 bus = SMBus(BUS)
 
-# Logging configuration - Use relative to script location
+# Logging configuration - Use dynamic paths for portability
 import os
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_NAME = os.path.basename(SCRIPT_DIR)  # "admin-pi" or "lab-pi"
-LOG_FILE = f"/home/{os.environ.get('USER', 'abhi')}/{PROJECT_NAME}/ups_log.csv"
-BATTERY_STATUS_FILE = f"/home/{os.environ.get('USER', 'abhi')}/{PROJECT_NAME}/battery_status.json"
+HOME_DIR = os.path.expanduser("~")  # Get home directory dynamically
+LOG_FILE = f"{HOME_DIR}/{PROJECT_NAME}/ups_log.csv"
+BATTERY_STATUS_FILE = f"{HOME_DIR}/{PROJECT_NAME}/battery_status.json"
 LOG_INTERVAL = 30  # seconds
 LOG_RETENTION = 6 * 3600  # 6 hours in seconds
+
+# Ensure log directory exists
+os.makedirs(f"{HOME_DIR}/{PROJECT_NAME}", exist_ok=True)
 
 # Battery thresholds
 WARNING_SOC = 20
@@ -282,14 +283,11 @@ def ac_status():
             except Exception as e:
                 print(f"⚠️ Sysfs GPIO read error: {e}")
                 return "UNKNOWN"
-            
+
     except Exception as e:
         print(f"⚠️ GPIO read error: {e}")
         return "UNKNOWN"
 
-    return "UNKNOWN"
-
-    return "UNKNOWN"
 
 def charging_status(ac, voltage):
     """

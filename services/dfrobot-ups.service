@@ -1,14 +1,28 @@
 [Unit]
-Description=DFRobot UPS Monitor Service
+Description=DFRobot UPS Monitor Service (Lab-Pi)
 After=network.target
+Wants=network-online.target
 
 [Service]
 Type=simple
-User=%i
+User=%u
 WorkingDirectory=%h/lab-pi
 ExecStart=/usr/bin/python3 %h/lab-pi/dfrobot_ups.py
 Restart=always
-RestartSec=10
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# Environment
+Environment=PYTHONUNBUFFERED=1
+
+# Hardening
+ProtectSystem=full
+NoNewPrivileges=true
+PrivateTmp=true
+
+# Resource limits
+MemoryMax=100M
 
 [Install]
 WantedBy=multi-user.target

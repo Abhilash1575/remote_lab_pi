@@ -1,19 +1,27 @@
 [Unit]
-Description=Virtual Lab - Audio Stream Service
-After=network.target sound.target
+Description=Virtual Lab - Audio Capture Service (Lab-Pi)
+After=network.target
+Wants=network-online.target
 
 [Service]
 Type=simple
-User=pi
-WorkingDirectory=/home/pi/lab-pi
-ExecStart=/usr/bin/python3 /home/pi/lab-pi/Audio/server.py
+User=%u
+WorkingDirectory=%h/lab-pi
+ExecStart=/usr/bin/python3 %h/lab-pi/audio_capture.py
 Restart=always
-RestartSec=10
+RestartSec=5
 StandardOutput=journal
 StandardError=journal
 
 # Environment
 Environment=PYTHONUNBUFFERED=1
+Environment=VLAB_PI_ID=LabPi1
+Environment=MASTER_URL=http://192.168.1.5:5000
+
+# Hardening
+ProtectSystem=full
+NoNewPrivileges=true
+PrivateTmp=true
 
 [Install]
 WantedBy=multi-user.target
