@@ -202,6 +202,26 @@ def swap16(x):
 def read_soc():
     raw = bus.read_word_data(ADDR, 0x04)
     soc = swap16(raw) / 256.0
+    
+    # Get voltage for diagnostic and fallback calculation
+    voltage = None
+    try:
+        raw_v = bus.read_word_data(ADDR, 0x02)
+        voltage = swap16(raw_v) * 1.25 / 1000.0 / 16.0
+    except:
+        pass
+    
+    # If SOC is 0 but voltage is above threshold, calculate estimated SOC
+    # This handles cases where fuel gauge lost calibration
+    if soc <= 1 and voltage is not None and voltage > 3.5:
+        # Estimate SOC based on voltage (LiPo 3.0V-4.2V range)
+        # Only use this as fallback, log warning
+        estimated_soc = ((voltage - 3.0) / 1.2) * 100
+        estimated_soc = max(0, min(100, estimated_soc))  # Clamp to 0-100
+        print(f"⚠️ SOC read 0% but voltage is {voltage:.3f}V - estimated SOC: {estimated_soc:.1f}%")
+        # Return the estimated SOC instead of 0
+        return max(0.0, min(100.0, estimated_soc))
+    
     # Validate - SOC should be between 0 and 100
     if soc < 0 or soc > 100:
         raise ValueError(f"Invalid SOC value: {soc}")
@@ -344,15 +364,21 @@ def log_data(soc, voltage, ac, chg):
         csv_writer.writerow([timestamp, round(soc, 2), voltage, ac, chg])
     print("📝 Logged data to CSV")
 
-def battery_reminder(soc):
+def battery_reminder(soc, voltage=None):
     """Check battery SOC and trigger reminders or shutdown"""
     global shutdown_triggered
     
     if shutdown_triggered:
         return
     
+    # If SOC is very low but we have voltage reading, check if it's a false reading
+    if soc <= SHUTDOWN_SOC and voltage is not None and voltage > 3.8:
+        # Voltage is above 3.8V, likely a fuel gauge issue - don't shutdown
+        print(f"⚠️ SOC shows {soc}% but voltage is {voltage:.3f}V - possible fuel gauge error, skipping shutdown")
+        return
+    
     if soc <= SHUTDOWN_SOC:
-        print("🛑 SOC ≤ 10% - Initiating graceful shutdown")
+        print(f"🛑 SOC ≤ 10% ({voltage:.3f}V if available) - Initiating graceful shutdown")
         shutdown_triggered = True
         # Give time for logs to flush
         time.sleep(5)
@@ -402,7 +428,7 @@ def main():
             # Only check battery status if I2C read was successful
             # Don't shutdown if I2C fails - just skip the check
             if i2c_success and soc is not None and soc > 0:
-                battery_reminder(soc)
+                battery_reminder(soc, voltage)
             elif not i2c_success:
                 print("⚠️ Skipping battery check - I2C communication issue")
             
