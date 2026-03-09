@@ -215,8 +215,10 @@ def read_voltage():
     raw = bus.read_word_data(ADDR, 0x02)
     vcell = swap16(raw) * 1.25 / 1000.0
     voltage = round(vcell / 16.0, 3)
-    # Validate - voltage should be between 3.0V and 4.2V for a LiPo battery
-    if voltage < 3.0 or voltage > 4.5:
+    # Validate - voltage should be between 2.5V and 4.5V for a LiPo battery
+    # 2.5V is the minimum safe voltage (below this the battery is damaged)
+    # 4.5V is above fully charged (4.2V max)
+    if voltage < 2.5 or voltage > 4.5:
         raise ValueError(f"Invalid voltage value: {voltage}")
     return voltage
 
