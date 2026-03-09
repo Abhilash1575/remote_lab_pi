@@ -487,10 +487,51 @@ function parseLineToMap(line){
   // Accepts separators: ',', ';', and within pairs: ':', '=', '>', '<', ' ', '&', '|', etc.
   // Handles multiple pairs per line, even without commas
   // Also handles single pair per line
+  // NEW: Also handles CSV header format like "temperature,humidity,voltage,current"
   const out = {};
   if(!line || typeof line !== 'string') return out;
+  
   // Remove timestamps (common when prefs append "15:22:33 " etc) by dropping leading time if it's like HH:MM:SS
   const trimmed = line.trim().replace(/^\d{1,2}:\d{2}:\d{2}\s*/, '');
+  
+  // Check if this is a CSV header line (comma-separated names without numeric values)
+  // Format: "temperature,humidity,voltage,current" (no numbers in the line)
+  const hasNumber = /\d/.test(trimmed);
+  const parts = trimmed.split(/[,;]/);
+  
+  // If line contains only letters, underscores, and commas (no numbers),
+  // treat it as a header line and store the variable names
+  if (!hasNumber && parts.length > 1) {
+    // Check if all parts are valid variable names (letters, numbers, underscores)
+    const allValidNames = parts.every(p => /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(p.trim()));
+    if (allValidNames) {
+      // Store header names for later use when data comes
+      window.lastDetectedHeaders = parts.map(p => p.trim().toLowerCase());
+      console.log('[Serial] Detected headers:', window.lastDetectedHeaders);
+      return out; // Return empty, headers will be used when data arrives
+    }
+  }
+  
+  // If we have previous headers and this line has numbers, map values to headers
+  if (window.lastDetectedHeaders && window.lastDetectedHeaders.length > 0) {
+    const values = trimmed.split(/[,;\s]+/).filter(v => v.trim());
+    if (values.length > 0) {
+      window.lastDetectedHeaders.forEach((header, index) => {
+        if (index < values.length) {
+          const num = Number(values[index]);
+          if (!isNaN(num)) {
+            out[header] = num;
+          }
+        }
+      });
+      // If we successfully parsed with headers, return the result
+      if (Object.keys(out).length > 0) {
+        return out;
+      }
+    }
+  }
+  
+  // Original parsing logic for key-value formats
   // First, split on comma or semicolon to get potential pair groups
   const pairGroups = trimmed.split(/[,;]/);
   pairGroups.forEach(group => {
