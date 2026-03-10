@@ -584,7 +584,7 @@ socket.on('feedback', (line) => {
 });
 
 /* ----------------- DYNAMIC CONTROLS (auto variable choices) ----------------- */
-let knownSensorKeys = new Set(['v', 'i', 'voltage', 'current', 'speed', 'rpm', 'temp', 'temperature', 'humidity', 'pressure', 'distance']); // dynamic now, with common defaults
+let knownSensorKeys = new Set(); // dynamic now - starts empty, populated from current data
 function createControlElement(cfg){
   const wrapper = document.createElement('div');
   wrapper.className='control-row';
@@ -616,7 +616,9 @@ function createControlElement(cfg){
     varSelect.className='small-input';
     varSelect.style.width='120px';
     varSelect.style.marginRight='8px';
-    Array.from(knownSensorKeys).forEach(k => {
+    // Use current keys from sensor data dropdown
+    const currentKeys = Array.from(yAxisFilter1.options).map(o => o.value).filter(v => v);
+    currentKeys.forEach(k => {
       const o = document.createElement('option');
       o.value=k;
       o.innerText=k;
@@ -683,7 +685,9 @@ else if(cfg.type === 'button'){
     keySelect.className='small-input';
     keySelect.style.width='140px';
     keySelect.style.marginRight='8px';
-    Array.from(knownSensorKeys).forEach(k => {
+    // Use current keys from sensor data
+    const currentKeys = Array.from(yAxisFilter1.options).map(o => o.value).filter(v => v);
+    currentKeys.forEach(k => {
       const o = document.createElement('option');
       o.value=k;
       o.innerText=k;
@@ -980,9 +984,10 @@ function autoCreateSlidersFromSensors(payloadKeys){
 let varDropdownMode = 'slider'; // slider/button/readout
 function showVarDropdown(mode){
   varDropdownMode = mode || 'slider';
-  // rebuild dropdown items from knownSensorKeys to include freshest keys
+  // rebuild dropdown items from CURRENT sensor keys
   varDropdown.innerHTML = '';
-  const keys = Array.from(knownSensorKeys);
+  const currentKeys = Array.from(yAxisFilter1.options).map(o => o.value).filter(v => v);
+  const keys = currentKeys;
   if(keys.length === 0){
     const info = document.createElement('div'); info.className='item'; info.innerText='(no variables yet)'; varDropdown.appendChild(info);
   } else {
