@@ -288,6 +288,12 @@ if ! pip show pyaudio >/dev/null 2>&1; then
     pip install pyaudio || echo "Warning: PyAudio installation failed. Audio features will be disabled."
 fi
 
+# Install FFmpeg and WebRTC dependencies for audio streaming
+echo "Installing FFmpeg and WebRTC dependencies..."
+sudo apt-get update -qq
+sudo apt-get install -y -qq libavformat-dev libavcodec-dev libavdevice-dev libavutil-dev libavfilter-dev libswscale-dev libswresample-dev ffmpeg 2>/dev/null || true
+pip install --break-system-packages aiohttp aiortc av numpy 2>/dev/null || pip install aiohttp aiortc numpy 2>/dev/null || echo "Warning: Some audio streaming dependencies failed to install."
+
 # ============================================================================
 # Step 7: Create Systemd Service
 # ============================================================================
