@@ -788,29 +788,28 @@ xAxisFilter.addEventListener('change', updateChartConfig);
 yAxisFilter1.addEventListener('change', updateChartConfig);
 yAxisFilter2.addEventListener('change', updateChartConfig);
 
-/* Dynamically populate Y-axis options based on knownSensorKeys */
-function updateYAxisFilterOptions(newKeys){
-  let updated = false;
-  newKeys.forEach(k => {
-    if(!knownSensorKeys.has(k)) { knownSensorKeys.add(k); updated = true; }
-  });
-  if(!updated && yAxisFilter1.options.length > 0 && yAxisFilter1.value) return; 
+/* Dynamically populate Y-axis options based on CURRENT sensor data only */
+function updateYAxisFilterOptions(currentKeys){
+  // Use only current data keys, not accumulated historical keys
   const cur1 = yAxisFilter1.value;
   const cur2 = yAxisFilter2.value;
+  
+  // Only populate dropdown with current data keys
   yAxisFilter1.innerHTML = '';
   yAxisFilter2.innerHTML = '<option value="">(Disabled)</option>';
-  const keysArray = Array.from(knownSensorKeys);
-  keysArray.forEach(k => {
+  
+  currentKeys.forEach(k => {
     const displayLabel = k.split('_').map(w=>w.charAt(0).toUpperCase()+w.slice(1)).join(' ');
     const o1 = document.createElement('option'); o1.value=k; o1.innerText = displayLabel; yAxisFilter1.appendChild(o1);
     const o2 = document.createElement('option'); o2.value=k; o2.innerText = displayLabel; yAxisFilter2.appendChild(o2);
   });
-  // Keep current selection if valid, otherwise use first available
-  let defaultKey1 = cur1 && knownSensorKeys.has(cur1) ? cur1 : (keysArray.length > 0 ? keysArray[0] : '');
+  
+  // Keep current selection if valid in current keys, otherwise use first two available
+  let defaultKey1 = cur1 && currentKeys.includes(cur1) ? cur1 : (currentKeys.length > 0 ? currentKeys[0] : '');
   yAxisFilter1.value = defaultKey1;
-  let defaultKey2 = cur2 && knownSensorKeys.has(cur2) ? cur2 : (keysArray.length > 1 ? keysArray[1] : '');
+  let defaultKey2 = cur2 && currentKeys.includes(cur2) ? cur2 : (currentKeys.length > 1 ? currentKeys[1] : '');
   yAxisFilter2.value = defaultKey2;
-  updateChartConfig(); 
+  updateChartConfig();
 }
 
 /* ----------------- SENSOR DATA handling ----------------- */
@@ -818,18 +817,13 @@ socket.on('sensor_data', (payload) => {
   if (!payload) return;
   sampleCount++;
 
-  // Get available numeric keys
+  // Get available numeric keys from CURRENT data only
   const numericKeys = Object.keys(payload).filter(k =>
     payload[k] !== null && payload[k] !== undefined &&
     !isNaN(Number(payload[k]))
   ).map(k => k.toLowerCase());
 
-  // Update known sensor keys
-  numericKeys.forEach(k => {
-    if(!knownSensorKeys.has(k)) knownSensorKeys.add(k);
-  });
-
-  // Update dropdown options
+  // Update dropdown with current data keys only
   updateYAxisFilterOptions(numericKeys);
 
   // Auto-select axes immediately if empty
