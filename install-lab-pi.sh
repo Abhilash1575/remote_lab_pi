@@ -369,12 +369,16 @@ echo -e "${YELLOW}Step 11: Setting up Audio/Video streaming services...${NC}"
 # Copy service files
 if [ -f "$PROJECT_DIR/Audio/services/mjpg-streamer.service" ]; then
     sudo cp "$PROJECT_DIR/Audio/services/mjpg-streamer.service" /etc/systemd/system/
-    echo "Copied mjpg-streamer.service"
+    # Replace %i with actual username
+    sudo sed -i "s|%i|$CURRENT_USER|g" /etc/systemd/system/mjpg-streamer.service
+    echo "Copied and configured mjpg-streamer.service"
 fi
 
 if [ -f "$PROJECT_DIR/Audio/services/audio_stream.service" ]; then
     sudo cp "$PROJECT_DIR/Audio/services/audio_stream.service" /etc/systemd/system/
-    echo "Copied audio_stream.service"
+    sudo sed -i "s|%h|$CURRENT_HOME|g" /etc/systemd/system/audio_stream.service
+    sudo sed -i "s|%i|$CURRENT_USER|g" /etc/systemd/system/audio_stream.service
+    echo "Copied and configured audio_stream.service"
 fi
 
 # Reload systemd
@@ -388,6 +392,31 @@ sudo systemctl start mjpg-streamer.service 2>/dev/null || true
 echo "Enabling audio streaming service..."
 sudo systemctl enable audio_stream.service 2>/dev/null || true
 sudo systemctl start audio_stream.service 2>/dev/null || true
+
+# ============================================================================
+# Step 12: Install DFRobot UPS Service
+# ============================================================================
+echo -e "${YELLOW}Step 12: Setting up UPS monitoring service...${NC}"
+
+# Copy UPS service file
+if [ -f "$PROJECT_DIR/services/dfrobot-ups.service" ]; then
+    sudo cp "$PROJECT_DIR/services/dfrobot-ups.service" /etc/systemd/system/
+    echo "Copied dfrobot-ups.service"
+    
+    # Update the service file with correct paths
+    CURRENT_HOME=$(eval echo ~$CURRENT_USER)
+    sudo sed -i "s|%h|$CURRENT_HOME|g" /etc/systemd/system/dfrobot-ups.service
+    sudo sed -i "s|%i|$CURRENT_USER|g" /etc/systemd/system/dfrobot-ups.service
+    sudo chmod 644 /etc/systemd/system/dfrobot-ups.service
+    
+    # Enable and start UPS service
+    sudo systemctl daemon-reload
+    sudo systemctl enable dfrobot-ups.service 2>/dev/null || true
+    sudo systemctl start dfrobot-ups.service 2>/dev/null || true
+    echo "UPS monitoring service enabled"
+else
+    echo "Warning: dfrobot-ups.service not found"
+fi
 
 echo -e "${GREEN}Audio/Video services installed${NC}"
 echo -e "${GREEN}========================================${NC}"
