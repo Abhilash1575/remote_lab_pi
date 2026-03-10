@@ -1,13 +1,13 @@
 [Unit]
-Description=Virtual Lab - Audio Capture Service (Lab-Pi)
+Description=Virtual Lab - Audio Streaming Service (Lab-Pi)
 After=network.target
 Wants=network-online.target
 
 [Service]
 Type=simple
 User=%i
-WorkingDirectory=%h/lab-pi
-ExecStart=/usr/bin/python3 %h/lab-pi/audio_capture.py
+WorkingDirectory=%h/lab-pi/sound
+ExecStart=/usr/bin/python3 %h/lab-pi/sound/server.py
 Restart=always
 RestartSec=5
 StandardOutput=journal
@@ -15,8 +15,6 @@ StandardError=journal
 
 # Environment
 Environment=PYTHONUNBUFFERED=1
-Environment=VLAB_PI_ID=LabPi1
-Environment=MASTER_URL=http://192.168.1.5:5000
 
 # Hardening
 ProtectSystem=full
