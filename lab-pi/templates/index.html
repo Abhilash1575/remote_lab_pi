@@ -753,6 +753,38 @@ loadLayoutBtn.addEventListener('click', () => {
   arr.forEach(cfg => createControlElement(cfg));
 });
 
+// Auto-load layout on page load
+window.addEventListener('DOMContentLoaded', () => {
+  const raw = localStorage.getItem('evl_layout');
+  if(raw) {
+    try {
+      const arr = JSON.parse(raw);
+      if(arr && arr.length > 0) {
+        dynamicControls.innerHTML = '';
+        arr.forEach(cfg => createControlElement(cfg));
+        console.log('[layout] Auto-loaded', arr.length, 'controls');
+      }
+    } catch(e) {
+      console.log('[layout] Auto-load error:', e);
+    }
+  }
+});
+
+// Handle page close/refresh - disconnect serial and turn off relay
+window.addEventListener('beforeunload', (e) => {
+  // Try to disconnect serial
+  try {
+    socket.emit('disconnect_serial');
+  } catch(e) {}
+  
+  // Turn off relay
+  fetch('/toggle_relay', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ state: 'off', session_key: sessionKey })
+  }).catch(() => {});
+});
+
 /* ----------------- CHART (keeps your existing logic + export) ----------------- */
 const chartCtx = document.getElementById('mainChart').getContext('2d');
 const visiblePoints = 50;
@@ -1389,7 +1421,11 @@ powerSavePopup.innerHTML = `
 document.body.appendChild(powerSavePopup);
 
 if (!sessionKey) {
-  document.body.innerHTML = '<div style="display:flex; align-items:center; justify-content:center; height:100vh; background:#1c1c2b; color:#e0e0e0; font-size:2em;">Invalid Session. Please book a slot from the homepage.</div><button onclick="window.location.href=\'/\'" style="padding:10px 20px; background:#00f0ff; color:#041726; border:none; border-radius:6px; font-weight:700;">Go to Homepage</button>';
+  document.body.innerHTML = '<div style="display:flex; align-items:center; justify-content:center; height:100vh; background:#1c1c2b; color:#e0e0e0; font-size:2em;">Invalid Session. Please book a slot from the homepage.<br><br><span style="font-size:0.5em;">Redirecting...</span></div><button onclick="window.location.href=\'/\'" style="padding:10px 20px; background:#00f0ff; color:#041726; border:none; border-radius:6px; font-weight:700;">Go to Homepage</button>';
+  // Auto-redirect after 2 seconds
+  setTimeout(function() {
+    window.location.href = '/';
+  }, 2000);
 } else {
   // Check if session is already completed
   const sessionStatus = localStorage.getItem('sessionStatus_' + sessionKey);
@@ -1422,26 +1458,23 @@ if (!sessionKey) {
       document.getElementById('timer').innerText = `Time Left: ${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 
       if (remaining <= 0) {
-        // Session ended - close all windows and show overlay
+        // Session ended - disconnect serial and show overlay
         localStorage.setItem('sessionStatus_' + sessionKey, 'COMPLETED');
         document.getElementById('sessionClosed').style.display = 'flex';
         document.querySelector('.container').style.display = 'none';
         document.querySelector('.header-bar').style.display = 'none';
 
-        // Auto-expand chart and video before closing
+        // Disconnect serial port if connected
         try {
-          const expandChartBtn = document.getElementById('expandChartBtn');
-          if (expandChartBtn) {
-            expandChartBtn.click();
-          }
-        } catch (e) { console.log('Auto expand chart error:', e); }
-        
-        try {
-          const expandVideoBtn = document.getElementById('expandVideoBtn');
-          if (expandVideoBtn) {
-            expandVideoBtn.click();
-          }
-        } catch (e) { console.log('Auto expand video error:', e); }
+          socket.emit('disconnect_serial');
+          feedbackAdd('[session] Session ended - serial disconnected');
+        } catch(e) { console.log('Serial disconnect error:', e); }
+
+        // Update button to show redirect message
+        const homeBtn = document.querySelector('#sessionClosed button');
+        if (homeBtn) {
+            homeBtn.innerText = 'Redirecting...';
+        }
 
         // Send request to server to remove session and turn off relay
         fetch('/remove_session', {
@@ -1450,22 +1483,10 @@ if (!sessionKey) {
           body: JSON.stringify({ session_key: sessionKey })
         });
 
-        // Close all opened windows
-        openedWindows.forEach(win => {
-          try {
-            if (win && !win.closed) {
-              win.close();
-            }
-          } catch (e) {
-            // Ignore errors when closing windows
-          }
-        });
-        openedWindows = [];
-
-        // Auto-close the main tab after showing the message for 3 seconds
+        // Auto-redirect to homepage after 2 seconds
         setTimeout(() => {
-          window.close();
-        }, 3000);
+          window.location.href = '/';
+        }, 2000);
       } else {
         setTimeout(updateTimer, 1000);
       }
