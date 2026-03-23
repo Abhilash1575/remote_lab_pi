@@ -891,13 +891,40 @@ socket.on('sensor_data', (payload) => {
     updateChartConfig();
   }
 
-  // Get values for selected axes
+  // Get values for selected axes with spike filtering
   const key1 = yAxisFilter1.value;
   const key2 = yAxisFilter2.value;
-  const val1 = key1 && payload[key1] !== undefined ? Number(payload[key1]) :
+  
+  // Get last values from buffer for spike detection
+  const lastEntry = chartBuffer[chartBuffer.length - 1];
+  const lastVal1 = lastEntry ? lastEntry.value1 : null;
+  const lastVal2 = lastEntry ? lastEntry.value2 : null;
+  
+  // Max allowed spike ratio (10x - anything larger is likely a glitch)
+  const MAX_SPIKE_RATIO = 10;
+  
+  // Helper to filter spikes
+  function filterSpike(newVal, lastVal) {
+    if (newVal === null || newVal === undefined) return null;
+    if (lastVal === null || lastVal === undefined) return newVal;
+    if (lastVal === 0) return newVal;
+    const ratio = newVal / Math.abs(lastVal);
+    // Allow if ratio is reasonable OR if the absolute difference is small (< 10)
+    if (ratio <= MAX_SPIKE_RATIO || Math.abs(newVal - lastVal) < 10) {
+      return newVal;
+    }
+    // Likely a spike - return last valid value
+    console.log('[chart] Filtered spike:', newVal, 'last:', lastVal);
+    return lastVal;
+  }
+  
+  const rawVal1 = key1 && payload[key1] !== undefined ? Number(payload[key1]) :
                key1 && payload[key1.toLowerCase()] !== undefined ? Number(payload[key1.toLowerCase()]) : null;
-  const val2 = key2 && payload[key2] !== undefined ? Number(payload[key2]) :
+  const rawVal2 = key2 && payload[key2] !== undefined ? Number(payload[key2]) :
                key2 && payload[key2.toLowerCase()] !== undefined ? Number(payload[key2.toLowerCase()]) : null;
+  
+  const val1 = filterSpike(rawVal1, lastVal1);
+  const val2 = filterSpike(rawVal2, lastVal2);
 
   // Add to chart buffer if we have data
   if (val1 !== null || val2 !== null) {
