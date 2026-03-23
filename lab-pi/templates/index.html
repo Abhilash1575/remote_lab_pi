@@ -603,7 +603,7 @@ function createControlElement(cfg){
   const removeBtn = document.createElement('button');
   removeBtn.innerText='❌';
   removeBtn.style.marginLeft='8px';
-  removeBtn.onclick = () => wrapper.remove();
+  removeBtn.onclick = () => { wrapper.remove(); saveLayoutToStorage(); };
 
   /* ============ SLIDER CONTROL ============ */
   if(cfg.type === 'slider'){
@@ -720,6 +720,53 @@ addButtonBtn.addEventListener('click', () => {
 addReadoutBtn.addEventListener('click', () => {
   showVarDropdown('readout');
 });
+
+// Auto-save layout to localStorage on every change
+function saveLayoutToStorage() {
+  if (!sessionKey) return;
+  const rows = document.querySelectorAll('#dynamicControls .control-row');
+  const arr = [];
+  rows.forEach(r => {
+    if(r.querySelector('input[type="range"]')) {
+      const label = r.querySelector('div').innerText;
+      const sel = r.querySelector('select');
+      arr.push({type:'slider', label, dataKey: sel ? sel.value : '', min: r.querySelector('input[type="range"]').min, max: r.querySelector('input[type="range"]').max});
+    } else if(r.querySelector('button.primary')) {
+      const sel = r.querySelector('select');
+      arr.push({type:'button', label: r.querySelector('div').innerText, dataKey: sel ? sel.value : ''});
+    } else if(r.querySelector('.readout-value')) {
+      const key = r.querySelector('.readout-value').getAttribute('data-key');
+      arr.push({type:'readout', dataKey: key});
+    }
+  });
+  // Save with session key prefix
+  localStorage.setItem('evl_layout_' + sessionKey, JSON.stringify(arr));
+}
+
+// Auto-load layout on page load (for same session)
+window.addEventListener('DOMContentLoaded', () => {
+  if (!sessionKey) return;
+  const raw = localStorage.getItem('evl_layout_' + sessionKey);
+  if(raw) {
+    try {
+      const arr = JSON.parse(raw);
+      if(arr && arr.length > 0) {
+        dynamicControls.innerHTML = '';
+        arr.forEach(cfg => createControlElement(cfg));
+        console.log('[layout] Auto-loaded', arr.length, 'controls for session');
+      }
+    } catch(e) {
+      console.log('[layout] Auto-load error:', e);
+    }
+  }
+});
+
+// Clear layout when session ends
+function clearLayoutOnSessionEnd() {
+  if (sessionKey) {
+    localStorage.removeItem('evl_layout_' + sessionKey);
+  }
+}
 
 // Handle page close/refresh - disconnect serial and turn off relay
 window.addEventListener('beforeunload', (e) => {
@@ -981,6 +1028,7 @@ function autoCreateSlidersFromSensors(payloadKeys){
           dataKey: nk,
           cmdTemplate: `{key}:{value}`
         });
+        saveLayoutToStorage();
         // visually dim this item so user doesn't create same slider repeatedly
         item.style.opacity = 0.4; item.style.pointerEvents = 'none';
         hideVarDropdown();
@@ -1018,6 +1066,7 @@ function showVarDropdown(mode){
           const label = prompt('Readout label (display):', k) || k;
           createControlElement({ type:'readout', label, dataKey: k, unit: '', decimals: 1 });
         }
+        saveLayoutToStorage();
         hideVarDropdown();
       };
       varDropdown.appendChild(item);
@@ -1402,6 +1451,7 @@ if (!sessionKey) {
   document.body.innerHTML = '<div style="display:flex; align-items:center; justify-content:center; height:100vh; background:#1c1c2b; color:#e0e0e0; font-size:2em;">Invalid Session. Please book a slot from the homepage.<br><br><span style="font-size:0.5em;">Redirecting...</span></div><button onclick="window.location.href=\'/\'" style="padding:10px 20px; background:#00f0ff; color:#041726; border:none; border-radius:6px; font-weight:700;">Go to Homepage</button>';
   // Auto-redirect after 2 seconds
   setTimeout(function() {
+    clearLayoutOnSessionEnd();
     window.location.href = '/';
   }, 2000);
 } else {
@@ -1463,6 +1513,7 @@ if (!sessionKey) {
 
         // Auto-redirect to homepage after 2 seconds
         setTimeout(() => {
+          clearLayoutOnSessionEnd();
           window.location.href = '/';
         }, 2000);
       } else {
