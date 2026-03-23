@@ -151,9 +151,6 @@ button{padding:8px 10px;border-radius:6px;border:none;cursor:pointer}
         <div style="position:relative;display:inline-block">
           <button id="addReadout" class="primary">Add Readout ⏷</button>
         </div>
-
-        <button id="saveLayout" style="background:#2ecc71">Save Layout</button>
-        <button id="loadLayout" style="background:#f39c12">Load Layout</button>
       </div>
       <div id="dynamicControls"></div>
       <div style="margin-top:8px;color:#9aaab4;font-size:13px">Click the small ❌ on a control to remove it.</div>
@@ -269,8 +266,6 @@ const dynamicControls = document.getElementById('dynamicControls');
 const addReadoutBtn = document.getElementById('addReadout');
 const addSliderBtn = document.getElementById('addSlider');
 const addButtonBtn = document.getElementById('addButton');
-const saveLayoutBtn = document.getElementById('saveLayout');
-const loadLayoutBtn = document.getElementById('loadLayout');
 const boardType = document.getElementById('boardType');
 
 const factoryResetBtn = document.getElementById('factoryResetBtn');
@@ -724,50 +719,6 @@ addButtonBtn.addEventListener('click', () => {
 /* Add readout */
 addReadoutBtn.addEventListener('click', () => {
   showVarDropdown('readout');
-});
-
-/* Save / Load layout (localStorage) */
-saveLayoutBtn.addEventListener('click', () => {
-  const rows = document.querySelectorAll('#dynamicControls .control-row');
-  const arr = [];
-  rows.forEach(r => {
-    if(r.querySelector('input[type="range"]')) {
-      const label = r.querySelector('div').innerText;
-      const sel = r.querySelector('select');
-      arr.push({type:'slider', label, dataKey: sel ? sel.value : '', min: r.querySelector('input[type="range"]').min, max: r.querySelector('input[type="range"]').max});
-    } else if(r.querySelector('button.primary')) {
-      const sel = r.querySelector('select');
-      arr.push({type:'button', label: r.querySelector('div').innerText, dataKey: sel ? sel.value : ''});
-    } else if(r.querySelector('.readout-value')) {
-      const key = r.querySelector('.readout-value').getAttribute('data-key');
-      arr.push({type:'readout', dataKey: key});
-    }
-  });
-  localStorage.setItem('evl_layout', JSON.stringify(arr));
-  alert('Layout saved locally.');
-});
-loadLayoutBtn.addEventListener('click', () => {
-  const raw = localStorage.getItem('evl_layout'); if(!raw){ alert('No saved layout'); return; }
-  dynamicControls.innerHTML = '';
-  const arr = JSON.parse(raw);
-  arr.forEach(cfg => createControlElement(cfg));
-});
-
-// Auto-load layout on page load
-window.addEventListener('DOMContentLoaded', () => {
-  const raw = localStorage.getItem('evl_layout');
-  if(raw) {
-    try {
-      const arr = JSON.parse(raw);
-      if(arr && arr.length > 0) {
-        dynamicControls.innerHTML = '';
-        arr.forEach(cfg => createControlElement(cfg));
-        console.log('[layout] Auto-loaded', arr.length, 'controls');
-      }
-    } catch(e) {
-      console.log('[layout] Auto-load error:', e);
-    }
-  }
 });
 
 // Handle page close/refresh - disconnect serial and turn off relay
