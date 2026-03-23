@@ -743,23 +743,36 @@ function saveLayoutToStorage() {
   localStorage.setItem('evl_layout_' + sessionKey, JSON.stringify(arr));
 }
 
-// Auto-load layout on page load (for same session)
-window.addEventListener('DOMContentLoaded', () => {
+let layoutLoaded = false; // Track if layout has been auto-loaded
+
+// Auto-load layout when sensor data becomes available (after serial connects)
+function loadLayoutWhenReady() {
+  if (layoutLoaded) return; // Already loaded
   if (!sessionKey) return;
   const raw = localStorage.getItem('evl_layout_' + sessionKey);
   if(raw) {
     try {
       const arr = JSON.parse(raw);
       if(arr && arr.length > 0) {
-        dynamicControls.innerHTML = '';
-        arr.forEach(cfg => createControlElement(cfg));
-        console.log('[layout] Auto-loaded', arr.length, 'controls for session');
+        // Wait until yAxisFilter1 has options (sensor data arrived)
+        const checkAndLoad = () => {
+          if (yAxisFilter1 && yAxisFilter1.options.length > 0) {
+            layoutLoaded = true;
+            dynamicControls.innerHTML = '';
+            arr.forEach(cfg => createControlElement(cfg));
+            console.log('[layout] Auto-loaded', arr.length, 'controls for session');
+          } else {
+            // Retry after short delay
+            setTimeout(checkAndLoad, 500);
+          }
+        };
+        checkAndLoad();
       }
     } catch(e) {
       console.log('[layout] Auto-load error:', e);
     }
   }
-});
+}
 
 // Clear layout when session ends
 function clearLayoutOnSessionEnd() {
@@ -904,6 +917,9 @@ function updateYAxisFilterOptions(currentKeys){
 socket.on('sensor_data', (payload) => {
   if (!payload) return;
   sampleCount++;
+
+  // Auto-load saved layout after first sensor data arrives
+  loadLayoutWhenReady();
 
   // Get numeric keys from CURRENT data only
   const numericKeys = Object.keys(payload).filter(k =>
@@ -1146,27 +1162,7 @@ document.getElementById('expandVideoBtn').addEventListener('click', () => {
 /* ----------------- Pause chart ----------------- */
 pauseChartBtn.addEventListener('click', () => { running = !running; pauseChartBtn.innerText = running ? 'Pause Chart' : 'Resume Chart'; });
 
-/* Try load saved layout on start (non-blocking) */
-window.addEventListener('load', () => {
-  // Set video feed dynamically
-  document.getElementById('videoFeed').src = videoUrl;
-  
-  const raw = localStorage.getItem('evl_layout'); 
-  if(raw){ 
-    try{ 
-      const arr = JSON.parse(raw); 
-      dynamicControls.innerHTML=''; 
-      arr.forEach(cfg=>{
-        createControlElement(cfg);
-        // Also populate knownSensorKeys from saved layout
-        if(cfg.dataKey && !knownSensorKeys.has(cfg.dataKey)){
-          knownSensorKeys.add(cfg.dataKey);
-        }
-      }); 
-    }catch(e){} 
-  }
-});
-
+/* Video feed toggle */
 const videoFeed = document.getElementById('videoFeed');
 const toggleVideoBtn = document.getElementById('toggleVideo');
 toggleVideoBtn.addEventListener('click', () => {
