@@ -787,21 +787,26 @@ let layoutLoaded = false; // Track if layout has been auto-loaded
 
 // Auto-load layout when sensor data becomes available (after serial connects)
 function loadLayoutWhenReady() {
-  if (layoutLoaded) return; // Already loaded
+  // Check if already loaded this session - use sessionStorage for page-refresh tracking
+  if (sessionStorage.getItem('layoutLoaded_' + sessionKey)) {
+    console.log('[layout] Already loaded, skipping');
+    return;
+  }
   if (!sessionKey) return;
   const raw = localStorage.getItem('evl_layout_' + sessionKey);
   if(raw) {
     try {
       const arr = JSON.parse(raw);
       if(arr && arr.length > 0) {
-        // Log what we're trying to load for debugging
-        console.log('[layout] Trying to load', arr.length, 'controls:', JSON.stringify(arr));
+        // Mark as loaded immediately
+        sessionStorage.setItem('layoutLoaded_' + sessionKey, 'true');
         
-        // Always load saved layout - don't wait for sensor keys
-        layoutLoaded = true;
+        console.log('[layout] Loading', arr.length, 'controls:', JSON.stringify(arr));
+        
+        // Clear any existing controls first
         dynamicControls.innerHTML = '';
+        
         arr.forEach(cfg => {
-          console.log('[layout] Creating control:', JSON.stringify(cfg));
           createControlElement(cfg);
         });
         console.log('[layout] Auto-loaded', arr.length, 'controls for session');
@@ -816,6 +821,7 @@ function loadLayoutWhenReady() {
 function clearLayoutOnSessionEnd() {
   if (sessionKey) {
     localStorage.removeItem('evl_layout_' + sessionKey);
+    sessionStorage.removeItem('layoutLoaded_' + sessionKey);
   }
 }
 
