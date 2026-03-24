@@ -612,14 +612,23 @@ function createControlElement(cfg){
     varSelect.style.width='120px';
     varSelect.style.marginRight='8px';
     // Use current keys from sensor data dropdown
-    const currentKeys = Array.from(yAxisFilter1.options).map(o => o.value).filter(v => v);
+    let currentKeys = Array.from(yAxisFilter1.options).map(o => o.value).filter(v => v);
+    // If saved dataKey exists but not in current keys, add it (for auto-load before sensor data arrives)
+    if (cfg.dataKey && !currentKeys.includes(cfg.dataKey) && !currentKeys.includes(cfg.dataKey.toLowerCase())) {
+      currentKeys.push(cfg.dataKey);
+    }
     currentKeys.forEach(k => {
       const o = document.createElement('option');
       o.value=k;
       o.innerText=k;
       varSelect.appendChild(o);
     });
-    if(cfg.dataKey) varSelect.value = cfg.dataKey;
+    // Set saved value, with fallback to first available
+    if (cfg.dataKey && currentKeys.includes(cfg.dataKey)) {
+      varSelect.value = cfg.dataKey;
+    } else if (currentKeys.length > 0) {
+      varSelect.value = currentKeys[0];
+    }
 
     const slider = document.createElement('input');
     slider.type='range';
@@ -634,7 +643,7 @@ function createControlElement(cfg){
     valSpan.style.minWidth='30px';
 
     let sliderTimeout = null;
-    let fixedVar = cfg.dataKey || varSelect.value; // lock selected variable
+    let fixedVar = varSelect.value; // use current selected variable
 
     slider.oninput = () => {
       valSpan.innerText = slider.value;
@@ -682,16 +691,27 @@ else if(cfg.type === 'button'){
     keySelect.style.marginRight='8px';
     // Use current keys from sensor data
     const currentKeys = Array.from(yAxisFilter1.options).map(o => o.value).filter(v => v);
+    // If saved dataKey exists but not in current keys, add it (for auto-load before sensor data arrives)
+    if (cfg.dataKey && !currentKeys.includes(cfg.dataKey) && !currentKeys.includes(cfg.dataKey.toLowerCase())) {
+      currentKeys.push(cfg.dataKey);
+    }
     currentKeys.forEach(k => {
       const o = document.createElement('option');
       o.value=k;
       o.innerText=k;
       keySelect.appendChild(o);
     });
+    // Set saved value, with fallback to first available
+    const savedKey = cfg.dataKey || '';
+    if (currentKeys.includes(savedKey)) {
+      keySelect.value = savedKey;
+    } else if (currentKeys.length > 0) {
+      keySelect.value = currentKeys[0];
+    }
     const valSpan = document.createElement('span');
     valSpan.className='readout-value';
     valSpan.id = 'readout-' + Math.random().toString(36).slice(2,9);
-    valSpan.setAttribute('data-key', cfg.dataKey || keySelect.value);
+    valSpan.setAttribute('data-key', keySelect.value);
     valSpan.setAttribute('data-unit', cfg.unit || '');
     valSpan.setAttribute('data-decimals', isNaN(cfg.decimals) ? '' : cfg.decimals);
     valSpan.innerText='--';
@@ -756,7 +776,8 @@ function loadLayoutWhenReady() {
       if(arr && arr.length > 0) {
         // Wait until yAxisFilter1 has options (sensor data arrived)
         const checkAndLoad = () => {
-          if (yAxisFilter1 && yAxisFilter1.options.length > 0) {
+          // Check if we have any sensor data keys OR saved layout has dataKey that we need to preserve
+          if (yAxisFilter1 && (yAxisFilter1.options.length > 0 || arr.some(c => c.dataKey))) {
             layoutLoaded = true;
             dynamicControls.innerHTML = '';
             arr.forEach(cfg => createControlElement(cfg));
@@ -1164,6 +1185,12 @@ pauseChartBtn.addEventListener('click', () => { running = !running; pauseChartBt
 
 /* Video feed toggle */
 const videoFeed = document.getElementById('videoFeed');
+// Set video source dynamically on page load
+if (videoFeed) {
+  const videoUrl = `${window.location.protocol}//${window.location.hostname}:${VIDEO_PORT}/?action=stream&resolution=1920x1080&quality=100`;
+  videoFeed.src = videoUrl;
+  console.log('Video URL set:', videoUrl);
+}
 const toggleVideoBtn = document.getElementById('toggleVideo');
 toggleVideoBtn.addEventListener('click', () => {
   if(videoFeed.style.display === 'none'){
