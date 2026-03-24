@@ -292,7 +292,7 @@ fi
 echo "Installing FFmpeg and WebRTC dependencies..."
 sudo apt-get update -qq
 sudo apt-get install -y -qq libavformat-dev libavcodec-dev libavdevice-dev libavutil-dev libavfilter-dev libswscale-dev libswresample-dev ffmpeg 2>/dev/null || true
-# Install Python deps - core requirements first
+# Install Python deps from root requirements.txt (which has all dependencies without av)
 pip install --break-system-packages -r requirements.txt 2>/dev/null || pip install -r requirements.txt 2>/dev/null || echo "Warning: Some dependencies failed to install."
 
 # ============================================================================
