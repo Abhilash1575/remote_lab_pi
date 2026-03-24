@@ -717,7 +717,7 @@ else if(cfg.type === 'button'){
     valSpan.id = 'readout-' + Math.random().toString(36).slice(2,9);
     valSpan.setAttribute('data-key', keySelect.value);
     valSpan.setAttribute('data-unit', cfg.unit || '');
-    valSpan.setAttribute('data-decimals', isNaN(cfg.decimals) ? '' : cfg.decimals);
+    valSpan.setAttribute('data-decimals', cfg.decimals || '');
     valSpan.innerText='--';
     keySelect.onchange = () => valSpan.setAttribute('data-key', keySelect.value);
     content.appendChild(keySelect);
@@ -763,7 +763,9 @@ function saveLayoutToStorage() {
       const key = r.querySelector('.readout-value').getAttribute('data-key');
       const labelEl = r.querySelector('div');
       const label = labelEl ? labelEl.innerText : key;
-      arr.push({type:'readout', label: label, dataKey: key});
+      const unit = r.querySelector('.readout-value').getAttribute('data-unit') || '';
+      const decimals = r.querySelector('.readout-value').getAttribute('data-decimals') || '';
+      arr.push({type:'readout', label: label, dataKey: key, unit: unit, decimals: decimals});
     }
   });
   // Save with session key prefix
