@@ -775,9 +775,6 @@ function saveLayoutToStorage() {
 
 // Auto-load layout when sensor data becomes available (after serial connects)
 function loadLayoutWhenReady() {
-  // Only load if controls container is empty (not already loaded on this page)
-  if (dynamicControls && dynamicControls.children.length > 0) return;
-  
   if (!sessionKey) return;
   const raw = localStorage.getItem('evl_layout_' + sessionKey);
   if(raw) {
