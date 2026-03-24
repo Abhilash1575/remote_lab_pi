@@ -787,8 +787,14 @@ function saveLayoutToStorage() {
 }
 
 
+let layoutLoaded = false; // Track if layout has been auto-loaded
+
 // Auto-load layout when sensor data becomes available (after serial connects)
 function loadLayoutWhenReady() {
+  // Only load once
+  if (layoutLoaded) return;
+  layoutLoaded = true;
+  
   if (!sessionKey) return;
   const raw = localStorage.getItem('evl_layout_' + sessionKey);
   if(raw) {
@@ -816,6 +822,7 @@ function clearLayoutOnSessionEnd() {
   if (sessionKey) {
     localStorage.removeItem('evl_layout_' + sessionKey);
   }
+  layoutLoaded = false; // Reset for next session
 }
 
 // Handle page close/refresh - disconnect serial and turn off relay
