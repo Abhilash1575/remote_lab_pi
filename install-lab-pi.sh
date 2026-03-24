@@ -278,6 +278,9 @@ source venv/bin/activate
 pip install --upgrade pip
 pip install -r requirements.txt
 
+# Skip av (PyAV) installation - it fails to build on aarch64 and is optional for audio
+pip uninstall -y av 2>/dev/null || true
+
 # Install PyAudio for audio capture (requires portaudio)
 # Try to install pre-built wheel first, otherwise build from source
 echo "Installing PyAudio for audio capture..."
