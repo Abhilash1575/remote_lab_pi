@@ -734,6 +734,7 @@ function loadLayoutWhenReady() {
   layoutLoadedThisPage = true;
   
   if (!sessionKey) return;
+  
   const raw = localStorage.getItem('evl_layout_' + sessionKey);
   if(raw) {
     try {
