@@ -985,10 +985,20 @@ socket.on('sensor_data', (payload) => {
   // Update readouts efficiently
   document.querySelectorAll('.readout-value').forEach(readout => {
     const dataKey = readout.getAttribute('data-key');
-    if (!dataKey) return;
+    if (!dataKey) {
+      readout.innerText = '--';
+      return;
+    }
 
-    const rawV = payload[dataKey] !== undefined ? payload[dataKey] :
-                 payload[dataKey.toLowerCase()] !== undefined ? payload[dataKey.toLowerCase()] : undefined;
+    // Try exact match first, then lowercase
+    let rawV = payload[dataKey];
+    if (rawV === undefined) {
+      rawV = payload[dataKey.toLowerCase()];
+    }
+    // Also try uppercase
+    if (rawV === undefined) {
+      rawV = payload[dataKey.toUpperCase()];
+    }
 
     if(rawV !== undefined && !isNaN(Number(rawV))){
       const value = Number(rawV);
