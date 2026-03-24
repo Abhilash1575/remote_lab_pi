@@ -611,20 +611,30 @@ function createControlElement(cfg){
     varSelect.className='small-input';
     varSelect.style.width='120px';
     varSelect.style.marginRight='8px';
-    // Use current keys from sensor data dropdown
-    let currentKeys = Array.from(yAxisFilter1.options).map(o => o.value).filter(v => v);
-    // If saved dataKey exists but not in current keys, add it (for auto-load before sensor data arrives)
-    if (cfg.dataKey && !currentKeys.includes(cfg.dataKey) && !currentKeys.includes(cfg.dataKey.toLowerCase())) {
+    
+    // Get current keys from sensor data dropdown - but first add saved dataKey if exists
+    let currentKeys = [];
+    if (cfg.dataKey) {
       currentKeys.push(cfg.dataKey);
     }
+    // Then add any current sensor keys
+    if (yAxisFilter1 && yAxisFilter1.options) {
+      Array.from(yAxisFilter1.options).forEach(o => {
+        if (o.value && !currentKeys.includes(o.value)) {
+          currentKeys.push(o.value);
+        }
+      });
+    }
+    
     currentKeys.forEach(k => {
       const o = document.createElement('option');
       o.value=k;
       o.innerText=k;
       varSelect.appendChild(o);
     });
-    // Set saved value, with fallback to first available
-    if (cfg.dataKey && currentKeys.includes(cfg.dataKey)) {
+    
+    // Set saved value if it exists
+    if (cfg.dataKey) {
       varSelect.value = cfg.dataKey;
     } else if (currentKeys.length > 0) {
       varSelect.value = currentKeys[0];
@@ -689,25 +699,35 @@ else if(cfg.type === 'button'){
     keySelect.className='small-input';
     keySelect.style.width='140px';
     keySelect.style.marginRight='8px';
-    // Use current keys from sensor data
-    const currentKeys = Array.from(yAxisFilter1.options).map(o => o.value).filter(v => v);
-    // If saved dataKey exists but not in current keys, add it (for auto-load before sensor data arrives)
-    if (cfg.dataKey && !currentKeys.includes(cfg.dataKey) && !currentKeys.includes(cfg.dataKey.toLowerCase())) {
+    
+    // Get current keys - but first add saved dataKey if exists
+    let currentKeys = [];
+    if (cfg.dataKey) {
       currentKeys.push(cfg.dataKey);
     }
+    // Then add any current sensor keys
+    if (yAxisFilter1 && yAxisFilter1.options) {
+      Array.from(yAxisFilter1.options).forEach(o => {
+        if (o.value && !currentKeys.includes(o.value)) {
+          currentKeys.push(o.value);
+        }
+      });
+    }
+    
     currentKeys.forEach(k => {
       const o = document.createElement('option');
       o.value=k;
       o.innerText=k;
       keySelect.appendChild(o);
     });
-    // Set saved value, with fallback to first available
-    const savedKey = cfg.dataKey || '';
-    if (currentKeys.includes(savedKey)) {
-      keySelect.value = savedKey;
+    
+    // Set saved value
+    if (cfg.dataKey) {
+      keySelect.value = cfg.dataKey;
     } else if (currentKeys.length > 0) {
       keySelect.value = currentKeys[0];
     }
+    
     const valSpan = document.createElement('span');
     valSpan.className='readout-value';
     valSpan.id = 'readout-' + Math.random().toString(36).slice(2,9);
@@ -774,10 +794,16 @@ function loadLayoutWhenReady() {
     try {
       const arr = JSON.parse(raw);
       if(arr && arr.length > 0) {
-        // Wait until yAxisFilter1 has options (sensor data arrived)
+        // Wait until yAxisFilter1 is ready (sensor data arrived)
         const checkAndLoad = () => {
-          // Check if we have any sensor data keys OR saved layout has dataKey that we need to preserve
-          if (yAxisFilter1 && (yAxisFilter1.options.length > 0 || arr.some(c => c.dataKey))) {
+          // Check if yAxisFilter1 exists and has options
+          let hasSensorKeys = false;
+          if (yAxisFilter1 && yAxisFilter1.options && yAxisFilter1.options.length > 0) {
+            hasSensorKeys = true;
+          }
+          
+          // Load if we have sensor keys OR if saved layout has dataKeys
+          if (hasSensorKeys || arr.some(c => c.dataKey)) {
             layoutLoaded = true;
             dynamicControls.innerHTML = '';
             arr.forEach(cfg => createControlElement(cfg));
