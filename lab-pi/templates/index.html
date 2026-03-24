@@ -607,30 +607,20 @@ function createControlElement(cfg){
 
   /* ============ SLIDER CONTROL ============ */
   if(cfg.type === 'slider'){
-    const varSelect = document.createElement('select');
-    varSelect.className='small-input';
-    varSelect.style.width='120px';
-    varSelect.style.marginRight='8px';
+    // Just show key as text - no dropdown
+    const keySpan = document.createElement('span');
+    keySpan.style.marginRight = '8px';
+    keySpan.style.fontWeight = '500';
     
-    // Get current keys from sensor data dropdown
+    // Get current keys from sensor data
     let currentKeys = [];
     if (yAxisFilter1 && yAxisFilter1.options) {
       currentKeys = Array.from(yAxisFilter1.options).map(o => o.value).filter(v => v);
     }
     
-    currentKeys.forEach(k => {
-      const o = document.createElement('option');
-      o.value=k;
-      o.innerText=k;
-      varSelect.appendChild(o);
-    });
-    
-    // Set saved value if it exists and is in current keys
-    if (cfg.dataKey && currentKeys.includes(cfg.dataKey)) {
-      varSelect.value = cfg.dataKey;
-    } else if (currentKeys.length > 0) {
-      varSelect.value = currentKeys[0];
-    }
+    // Use saved key if available in current data, otherwise use first available
+    const displayKey = (cfg.dataKey && currentKeys.includes(cfg.dataKey)) ? cfg.dataKey : (currentKeys.length > 0 ? currentKeys[0] : cfg.dataKey);
+    keySpan.innerText = displayKey || 'var';
 
     const slider = document.createElement('input');
     slider.type='range';
@@ -645,7 +635,7 @@ function createControlElement(cfg){
     valSpan.style.minWidth='30px';
 
     let sliderTimeout = null;
-    let fixedVar = varSelect.value; // use current selected variable
+    let fixedVar = displayKey || 'var'; // use current selected variable
 
     slider.oninput = () => {
       valSpan.innerText = slider.value;
@@ -658,7 +648,7 @@ function createControlElement(cfg){
     };
 
 
-    content.appendChild(varSelect);
+    content.appendChild(keySpan);
     content.appendChild(slider);
     content.appendChild(valSpan);
   }
@@ -687,10 +677,10 @@ else if(cfg.type === 'button'){
 
   /* ============ READOUT CONTROL ============ */
   else if(cfg.type === 'readout'){
-    const keySelect = document.createElement('select');
-    keySelect.className='small-input';
-    keySelect.style.width='140px';
-    keySelect.style.marginRight='8px';
+    // Just show the saved key as text - no dropdown needed
+    const keySpan = document.createElement('span');
+    keySpan.style.marginRight = '8px';
+    keySpan.style.fontWeight = '500';
     
     // Get current keys from sensor data
     let currentKeys = [];
@@ -698,29 +688,19 @@ else if(cfg.type === 'button'){
       currentKeys = Array.from(yAxisFilter1.options).map(o => o.value).filter(v => v);
     }
     
-    currentKeys.forEach(k => {
-      const o = document.createElement('option');
-      o.value=k;
-      o.innerText=k;
-      keySelect.appendChild(o);
-    });
-    
-    // Set saved value if it exists and is in current keys
-    if (cfg.dataKey && currentKeys.includes(cfg.dataKey)) {
-      keySelect.value = cfg.dataKey;
-    } else if (currentKeys.length > 0) {
-      keySelect.value = currentKeys[0];
-    }
+    // Use saved key if available in current data, otherwise use first available
+    const displayKey = (cfg.dataKey && currentKeys.includes(cfg.dataKey)) ? cfg.dataKey : (currentKeys.length > 0 ? currentKeys[0] : cfg.dataKey);
+    keySpan.innerText = displayKey || '--';
     
     const valSpan = document.createElement('span');
     valSpan.className='readout-value';
     valSpan.id = 'readout-' + Math.random().toString(36).slice(2,9);
-    valSpan.setAttribute('data-key', keySelect.value);
+    valSpan.setAttribute('data-key', displayKey);
     valSpan.setAttribute('data-unit', cfg.unit || '');
     valSpan.setAttribute('data-decimals', cfg.decimals || '');
     valSpan.innerText='--';
-    keySelect.onchange = () => valSpan.setAttribute('data-key', keySelect.value);
-    content.appendChild(keySelect);
+    
+    content.appendChild(keySpan);
     content.appendChild(valSpan);
   }
 
