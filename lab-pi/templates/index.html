@@ -794,26 +794,17 @@ function loadLayoutWhenReady() {
     try {
       const arr = JSON.parse(raw);
       if(arr && arr.length > 0) {
-        // Wait until yAxisFilter1 is ready (sensor data arrived)
-        const checkAndLoad = () => {
-          // Check if yAxisFilter1 exists and has options
-          let hasSensorKeys = false;
-          if (yAxisFilter1 && yAxisFilter1.options && yAxisFilter1.options.length > 0) {
-            hasSensorKeys = true;
-          }
-          
-          // Load if we have sensor keys OR if saved layout has dataKeys
-          if (hasSensorKeys || arr.some(c => c.dataKey)) {
-            layoutLoaded = true;
-            dynamicControls.innerHTML = '';
-            arr.forEach(cfg => createControlElement(cfg));
-            console.log('[layout] Auto-loaded', arr.length, 'controls for session');
-          } else {
-            // Retry after short delay
-            setTimeout(checkAndLoad, 500);
-          }
-        };
-        checkAndLoad();
+        // Log what we're trying to load for debugging
+        console.log('[layout] Trying to load', arr.length, 'controls:', JSON.stringify(arr));
+        
+        // Always load saved layout - don't wait for sensor keys
+        layoutLoaded = true;
+        dynamicControls.innerHTML = '';
+        arr.forEach(cfg => {
+          console.log('[layout] Creating control:', JSON.stringify(cfg));
+          createControlElement(cfg);
+        });
+        console.log('[layout] Auto-loaded', arr.length, 'controls for session');
       }
     } catch(e) {
       console.log('[layout] Auto-load error:', e);
