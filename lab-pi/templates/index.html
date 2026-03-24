@@ -607,23 +607,10 @@ function createControlElement(cfg){
 
   /* ============ SLIDER CONTROL ============ */
   if(cfg.type === 'slider'){
-    // Just show key as text - no dropdown
-    const keySpan = document.createElement('span');
-    keySpan.style.marginRight = '8px';
-    keySpan.style.fontWeight = '500';
-    
-    // Get current keys from sensor data
-    let currentKeys = [];
-    if (yAxisFilter1 && yAxisFilter1.options) {
-      currentKeys = Array.from(yAxisFilter1.options).map(o => o.value).filter(v => v);
-    }
-    
-    // Use saved key if available in current data, otherwise use first available
-    const displayKey = (cfg.dataKey && currentKeys.includes(cfg.dataKey)) ? cfg.dataKey : (currentKeys.length > 0 ? currentKeys[0] : cfg.dataKey);
-    keySpan.innerText = displayKey || 'var';
-
+    // Label already shows the name - add data-key to slider for saving
     const slider = document.createElement('input');
     slider.type='range';
+    slider.setAttribute('data-key', cfg.dataKey || '');
     slider.min = cfg.min || 0;
     slider.max = cfg.max || 1023;
     slider.value = cfg.value !== undefined ? cfg.value : Math.floor(((Number(slider.min)||0)+(Number(slider.max)||1023))/2);
@@ -635,7 +622,7 @@ function createControlElement(cfg){
     valSpan.style.minWidth='30px';
 
     let sliderTimeout = null;
-    let fixedVar = displayKey || 'var'; // use current selected variable
+    let fixedVar = cfg.dataKey || 'var'; // use saved dataKey
 
     slider.oninput = () => {
       valSpan.innerText = slider.value;
@@ -648,7 +635,6 @@ function createControlElement(cfg){
     };
 
 
-    content.appendChild(keySpan);
     content.appendChild(slider);
     content.appendChild(valSpan);
   }
@@ -677,30 +663,15 @@ else if(cfg.type === 'button'){
 
   /* ============ READOUT CONTROL ============ */
   else if(cfg.type === 'readout'){
-    // Just show the saved key as text - no dropdown needed
-    const keySpan = document.createElement('span');
-    keySpan.style.marginRight = '8px';
-    keySpan.style.fontWeight = '500';
-    
-    // Get current keys from sensor data
-    let currentKeys = [];
-    if (yAxisFilter1 && yAxisFilter1.options) {
-      currentKeys = Array.from(yAxisFilter1.options).map(o => o.value).filter(v => v);
-    }
-    
-    // Use saved key if available in current data, otherwise use first available
-    const displayKey = (cfg.dataKey && currentKeys.includes(cfg.dataKey)) ? cfg.dataKey : (currentKeys.length > 0 ? currentKeys[0] : cfg.dataKey);
-    keySpan.innerText = displayKey || '--';
-    
+    // Label already shows the name
     const valSpan = document.createElement('span');
     valSpan.className='readout-value';
     valSpan.id = 'readout-' + Math.random().toString(36).slice(2,9);
-    valSpan.setAttribute('data-key', displayKey);
+    valSpan.setAttribute('data-key', cfg.dataKey || '');
     valSpan.setAttribute('data-unit', cfg.unit || '');
     valSpan.setAttribute('data-decimals', cfg.decimals || '');
     valSpan.innerText='--';
     
-    content.appendChild(keySpan);
     content.appendChild(valSpan);
   }
 
@@ -734,8 +705,9 @@ function saveLayoutToStorage() {
     if(r.querySelector('input[type="range"]')) {
       const labelDiv = r.querySelector('div');
       const label = labelDiv ? labelDiv.innerText : '';
-      const sel = r.querySelector('select');
-      arr.push({type:'slider', label: label, dataKey: sel ? sel.value : '', min: r.querySelector('input[type="range"]').min, max: r.querySelector('input[type="range"]').max});
+      const sliderEl = r.querySelector('input[type="range"]');
+      const dataKey = sliderEl.getAttribute('data-key') || '';
+      arr.push({type:'slider', label: label, dataKey: dataKey, min: sliderEl.min, max: sliderEl.max});
     } else if(r.querySelector('button.primary')) {
       const sel = r.querySelector('select');
       arr.push({type:'button', label: r.querySelector('div').innerText, dataKey: sel ? sel.value : ''});
