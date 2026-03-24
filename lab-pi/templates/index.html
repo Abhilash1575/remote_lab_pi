@@ -773,8 +773,14 @@ function saveLayoutToStorage() {
 }
 
 
+let layoutLoadedThisPage = false;
+
 // Auto-load layout when sensor data becomes available (after serial connects)
 function loadLayoutWhenReady() {
+  // Prevent loading multiple times in same page
+  if (layoutLoadedThisPage) return;
+  layoutLoadedThisPage = true;
+  
   if (!sessionKey) return;
   const raw = localStorage.getItem('evl_layout_' + sessionKey);
   if(raw) {
