@@ -701,20 +701,35 @@ function saveLayoutToStorage() {
   if (!sessionKey) return;
   const rows = document.querySelectorAll('#dynamicControls .control-row');
   const arr = [];
+  const seen = new Set(); // Track unique controls
+  
   rows.forEach(r => {
     if(r.querySelector('input[type="range"]')) {
       const labelDiv = r.querySelector('div');
       const label = labelDiv ? labelDiv.innerText : '';
       const sliderEl = r.querySelector('input[type="range"]');
       const dataKey = sliderEl.getAttribute('data-key') || '';
+      // Skip duplicate controls with same label
+      const key = 'slider:' + label;
+      if (seen.has(key)) return;
+      seen.add(key);
       arr.push({type:'slider', label: label, dataKey: dataKey, min: sliderEl.min, max: sliderEl.max});
     } else if(r.querySelector('button.primary')) {
+      const label = r.querySelector('div').innerText;
+      // Skip duplicate controls with same label
+      const key = 'button:' + label;
+      if (seen.has(key)) return;
+      seen.add(key);
       const sel = r.querySelector('select');
-      arr.push({type:'button', label: r.querySelector('div').innerText, dataKey: sel ? sel.value : ''});
+      arr.push({type:'button', label: label, dataKey: sel ? sel.value : ''});
     } else if(r.querySelector('.readout-value')) {
       const key = r.querySelector('.readout-value').getAttribute('data-key');
       const labelEl = r.querySelector('div');
       const label = labelEl ? labelEl.innerText : key;
+      // Skip duplicate controls with same label
+      const uniqKey = 'readout:' + label;
+      if (seen.has(uniqKey)) return;
+      seen.add(uniqKey);
       const unit = r.querySelector('.readout-value').getAttribute('data-unit') || '';
       const decimals = r.querySelector('.readout-value').getAttribute('data-decimals') || '';
       arr.push({type:'readout', label: label, dataKey: key, unit: unit, decimals: decimals});
@@ -734,6 +749,11 @@ function loadLayoutWhenReady() {
   layoutLoadedThisPage = true;
   
   if (!sessionKey) return;
+  
+  // Always clear old controls before loading
+  if (dynamicControls) {
+    dynamicControls.innerHTML = '';
+  }
   
   const raw = localStorage.getItem('evl_layout_' + sessionKey);
   if(raw) {
