@@ -10,7 +10,16 @@ os.environ['ALSA_CONFIG_PATH'] = '/usr/share/alsa/alsa.conf'
 from aiohttp import web
 from aiortc import RTCPeerConnection, RTCSessionDescription, MediaStreamTrack
 from aiortc.contrib.media import MediaPlayer
-from av import AudioFrame
+
+# PyAV (av) is optional - audio streaming won't work without it, but core features will function
+try:
+    from av import AudioFrame
+    AV_AVAILABLE = True
+except ImportError:
+    print("Warning: PyAV (av) not available - audio streaming disabled")
+    AV_AVAILABLE = False
+    AudioFrame = None
+
 import time
 
 # Get the directory where this script is located
@@ -65,6 +74,8 @@ class SilenceAudioTrack(MediaStreamTrack):
     kind = "audio"
 
     async def recv(self):
+        if not AV_AVAILABLE:
+            raise StopIteration
         # Generate 20ms of silence at 48kHz
         samples = 960
         frame = AudioFrame(format="s16", layout="mono", samples=samples)

@@ -292,7 +292,10 @@ fi
 echo "Installing FFmpeg and WebRTC dependencies..."
 sudo apt-get update -qq
 sudo apt-get install -y -qq libavformat-dev libavcodec-dev libavdevice-dev libavutil-dev libavfilter-dev libswscale-dev libswresample-dev ffmpeg 2>/dev/null || true
-pip install --break-system-packages aiohttp aiortc av numpy 2>/dev/null || pip install aiohttp aiortc numpy 2>/dev/null || echo "Warning: Some audio streaming dependencies failed to install."
+# Install Python deps - av (PyAV) is optional, don't fail if it can't build
+pip install --break-system-packages aiohttp aiortc numpy 2>/dev/null || pip install aiohttp aiortc numpy 2>/dev/null || echo "Warning: Some audio streaming dependencies failed to install."
+# Try to install av, but don't fail if it doesn't work (it's optional for audio streaming)
+pip install --break-system-packages av 2>/dev/null || echo "Warning: PyAV (av) failed to install - audio streaming may not work but core features will still function"
 
 # ============================================================================
 # Step 7: Create Systemd Service
