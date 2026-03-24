@@ -612,18 +612,10 @@ function createControlElement(cfg){
     varSelect.style.width='120px';
     varSelect.style.marginRight='8px';
     
-    // Get current keys from sensor data dropdown - but first add saved dataKey if exists
+    // Get current keys from sensor data dropdown
     let currentKeys = [];
-    if (cfg.dataKey) {
-      currentKeys.push(cfg.dataKey);
-    }
-    // Then add any current sensor keys
     if (yAxisFilter1 && yAxisFilter1.options) {
-      Array.from(yAxisFilter1.options).forEach(o => {
-        if (o.value && !currentKeys.includes(o.value)) {
-          currentKeys.push(o.value);
-        }
-      });
+      currentKeys = Array.from(yAxisFilter1.options).map(o => o.value).filter(v => v);
     }
     
     currentKeys.forEach(k => {
@@ -633,8 +625,8 @@ function createControlElement(cfg){
       varSelect.appendChild(o);
     });
     
-    // Set saved value if it exists
-    if (cfg.dataKey) {
+    // Set saved value if it exists and is in current keys
+    if (cfg.dataKey && currentKeys.includes(cfg.dataKey)) {
       varSelect.value = cfg.dataKey;
     } else if (currentKeys.length > 0) {
       varSelect.value = currentKeys[0];
@@ -700,18 +692,10 @@ else if(cfg.type === 'button'){
     keySelect.style.width='140px';
     keySelect.style.marginRight='8px';
     
-    // Get current keys - but first add saved dataKey if exists
+    // Get current keys from sensor data
     let currentKeys = [];
-    if (cfg.dataKey) {
-      currentKeys.push(cfg.dataKey);
-    }
-    // Then add any current sensor keys
     if (yAxisFilter1 && yAxisFilter1.options) {
-      Array.from(yAxisFilter1.options).forEach(o => {
-        if (o.value && !currentKeys.includes(o.value)) {
-          currentKeys.push(o.value);
-        }
-      });
+      currentKeys = Array.from(yAxisFilter1.options).map(o => o.value).filter(v => v);
     }
     
     currentKeys.forEach(k => {
@@ -721,8 +705,8 @@ else if(cfg.type === 'button'){
       keySelect.appendChild(o);
     });
     
-    // Set saved value
-    if (cfg.dataKey) {
+    // Set saved value if it exists and is in current keys
+    if (cfg.dataKey && currentKeys.includes(cfg.dataKey)) {
       keySelect.value = cfg.dataKey;
     } else if (currentKeys.length > 0) {
       keySelect.value = currentKeys[0];
