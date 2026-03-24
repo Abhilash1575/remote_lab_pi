@@ -758,30 +758,6 @@ function loadLayoutWhenReady() {
   const raw = localStorage.getItem('evl_layout_' + sessionKey);
   if(raw) {
     try {
-      let arr = JSON.parse(raw);
-      if(arr && arr.length > 0) {
-        // Deduplicate controls by label
-        const seen = new Set();
-        arr = arr.filter(cfg => {
-          const key = cfg.type + ':' + (cfg.label || cfg.dataKey || '');
-          if (seen.has(key)) return false;
-          seen.add(key);
-          return true;
-        });
-        
-        console.log('[layout] Loading', arr.length, 'controls:', JSON.stringify(arr));
-        
-        arr.forEach(cfg => {
-          createControlElement(cfg);
-        });
-        console.log('[layout] Auto-loaded', arr.length, 'controls for session');
-      }
-    } catch(e) {
-      console.log('[layout] Auto-load error:', e);
-    }
-  }
-}
-    try {
       const arr = JSON.parse(raw);
       if(arr && arr.length > 0) {
         console.log('[layout] Loading', arr.length, 'controls:', JSON.stringify(arr));
