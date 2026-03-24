@@ -320,6 +320,10 @@ let connectTimeoutHandle = null;
 let socketConnected = false;
 let sampleCount = 0; // alias for compatibility with new sensor_data handler
 let running = true;
+
+// Track last readout values for stillness detection
+let lastReadoutValues = {};
+let stillCount = {}; // count consecutive still readings per key
 let lastSelectedKey1 = ''; // track last selected key to clear chart when changed
 
 /* ----------------- Helpers ----------------- */
@@ -1002,6 +1006,24 @@ socket.on('sensor_data', (payload) => {
 
     if(rawV !== undefined && !isNaN(Number(rawV))){
       const value = Number(rawV);
+      
+      // Check for stillness: if value is same as last reading
+      const lastVal = lastReadoutValues[dataKey];
+      if (lastVal !== undefined && Math.abs(value - lastVal) < 1) {
+        // Value is essentially still - increment still counter
+        stillCount[dataKey] = (stillCount[dataKey] || 0) + 1;
+      } else {
+        // Value changed - reset still counter
+        stillCount[dataKey] = 0;
+      }
+      lastReadoutValues[dataKey] = value;
+      
+      // If still for 3+ consecutive readings, show '--' instead
+      if (stillCount[dataKey] >= 3) {
+        readout.innerText = '--';
+        return;
+      }
+      
       const decimals = parseInt(readout.getAttribute('data-decimals')) || 2;
       readout.innerText = value.toFixed(decimals);
     } else {
