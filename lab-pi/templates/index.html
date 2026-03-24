@@ -768,15 +768,18 @@ function saveLayoutToStorage() {
   const arr = [];
   rows.forEach(r => {
     if(r.querySelector('input[type="range"]')) {
-      const label = r.querySelector('div').innerText;
+      const labelDiv = r.querySelector('div');
+      const label = labelDiv ? labelDiv.innerText : '';
       const sel = r.querySelector('select');
-      arr.push({type:'slider', label, dataKey: sel ? sel.value : '', min: r.querySelector('input[type="range"]').min, max: r.querySelector('input[type="range"]').max});
+      arr.push({type:'slider', label: label, dataKey: sel ? sel.value : '', min: r.querySelector('input[type="range"]').min, max: r.querySelector('input[type="range"]').max});
     } else if(r.querySelector('button.primary')) {
       const sel = r.querySelector('select');
       arr.push({type:'button', label: r.querySelector('div').innerText, dataKey: sel ? sel.value : ''});
     } else if(r.querySelector('.readout-value')) {
       const key = r.querySelector('.readout-value').getAttribute('data-key');
-      arr.push({type:'readout', dataKey: key});
+      const labelEl = r.querySelector('div');
+      const label = labelEl ? labelEl.innerText : key;
+      arr.push({type:'readout', label: label, dataKey: key});
     }
   });
   // Save with session key prefix
