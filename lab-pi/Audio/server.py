@@ -1,24 +1,17 @@
 #!/usr/bin/env python3
-"""
-Audio Streaming Server for Virtual Lab
-Handles WebRTC audio streaming between Lab Pi and Admin/Student clients
-"""
-
 import json
 import asyncio
 import threading
 import base64
+import random
 from flask import Flask, request, jsonify
 from flask_socketio import SocketIO, send, emit
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'virtual-lab-audio-secret'
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
+socketio = SocketIO(app, cors_allowed_origins='*', async_mode='threading')
 
-# Store active audio sessions
 audio_sessions = {}
-
-# Store latest audio chunks for each Lab Pi (for new connections)
 latest_audio = {}
 
 @app.route('/health')
@@ -27,7 +20,6 @@ def health():
 
 @app.route('/api/audio/stream', methods=['POST'])
 def receive_audio():
-    """Receive audio stream from Lab Pi"""
     try:
         data = request.json
         lab_pi_id = data.get('lab_pi_id')
@@ -38,14 +30,12 @@ def receive_audio():
         if not lab_pi_id or not audio_b64:
             return jsonify({'error': 'Missing lab_pi_id or audio'}), 400
         
-        # Store latest audio for this Lab Pi
         latest_audio[lab_pi_id] = {
             'audio': audio_b64,
             'sample_rate': sample_rate,
             'channels': channels
         }
         
-        # Broadcast to all connected clients for this Lab Pi
         socketio.emit('audio_data', {
             'lab_pi_id': lab_pi_id,
             'audio': audio_b64,
@@ -56,35 +46,83 @@ def receive_audio():
         return jsonify({'success': True})
         
     except Exception as e:
-        print(f"Error receiving audio: {e}")
+        print(f'Error receiving audio: {e}')
         return jsonify({'error': str(e)}), 500
 
 @app.route('/offer', methods=['POST'])
 def handle_offer():
-    """Handle WebRTC offer from client"""
     try:
         data = request.json
         sdp = data.get('sdp')
         session_id = data.get('session_id', 'default')
         
-        print(f"Received audio offer for session: {session_id}")
+        print(f'Received audio offer for session: {session_id}')
         
-        # For now, return a basic answer
-        # In production, this would connect to the Lab Pi's audio stream
-        answer = {
-            'type': 'answer',
-            'sdp': sdp,  # In production, this would be the actual answer from Lab Pi
-            'session_id': session_id
+        if not sdp:
+            return jsonify({'error': 'Missing SDP'}), 400
+        
+        audio_sessions[session_id] = {
+            'sdp': sdp,
+            'type': 'offer',
+            'active': True
         }
         
-        return jsonify(answer)
+        answer_sdp = generate_webrtc_answer(sdp)
+        
+        return jsonify({
+            'type': 'answer',
+            'sdp': answer_sdp,
+            'session_id': session_id
+        })
     except Exception as e:
-        print(f"Error handling offer: {e}")
+        print(f'Error handling offer: {e}')
         return jsonify({'error': str(e)}), 500
+
+def generate_webrtc_answer(offer_sdp):
+    lines = offer_sdp.split('\r\n')
+    answer_lines = []
+    
+    for line in lines:
+        if line.startswith('a=mid:'):
+            answer_lines.append(line)
+        elif line.startswith('a=msid-semantic:'):
+            answer_lines.append(line)
+        elif line.startswith('a=group:'):
+            answer_lines.append(line)
+        elif line.startswith('m='):
+            answer_lines.append(line.replace('recvonly', 'sendonly'))
+        elif line.startswith('a=rtcp-mux'):
+            answer_lines.append(line)
+        elif line.startswith('a=rtcp-rsize'):
+            answer_lines.append(line)
+        elif line.startswith('a=ice-options:'):
+            answer_lines.append(line)
+        elif line.startswith('a=ice-ufrag'):
+            answer_lines.append(line.replace(line.split(':')[1], generate_ice_password()))
+        elif line.startswith('a=ice-pwd'):
+            answer_lines.append(line.replace(line.split(':')[1], generate_ice_password()))
+        elif line.startswith('a=candidate'):
+            answer_lines.append(line)
+        elif line.startswith('a=setup:'):
+            answer_lines.append(line.replace('passive', 'active'))
+        elif line.startswith('a=rtpmap'):
+            answer_lines.append(line)
+        elif line.startswith('a=fmtp'):
+            answer_lines.append(line)
+        elif line.startswith('a=rtcp-fb'):
+            answer_lines.append(line)
+        elif line.startswith('a=ssrc'):
+            answer_lines.append(line)
+        elif line == '':
+            answer_lines.append(line)
+    
+    return '\r\n'.join(answer_lines)
+
+def generate_ice_password():
+    return ''.join(random.choices('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789', k=32))
 
 @app.route('/status')
 def status():
-    """Get audio server status"""
     return jsonify({
         'status': 'running',
         'sessions': len(audio_sessions),
@@ -93,12 +131,11 @@ def status():
 
 @socketio.on('connect')
 def handle_connect():
-    print(f"Client connected: {request.sid}")
+    print(f'Client connected: {request.sid}')
 
 @socketio.on('disconnect')
 def handle_disconnect():
-    print(f"Client disconnected: {request.sid}")
-    # Remove from sessions
+    print(f'Client disconnected: {request.sid}')
     for session_id, session in list(audio_sessions.items()):
         if session.get('sid') == request.sid:
             del audio_sessions[session_id]
@@ -106,7 +143,6 @@ def handle_disconnect():
 
 @socketio.on('audio_start')
 def handle_audio_start(data):
-    """Handle audio start request"""
     session_id = data.get('session_id', 'default')
     lab_pi_id = data.get('lab_pi_id')
     
@@ -116,25 +152,22 @@ def handle_audio_start(data):
         'lab_pi_id': lab_pi_id
     }
     
-    # Send latest audio if available
     if lab_pi_id and lab_pi_id in latest_audio:
         emit('audio_data', latest_audio[lab_pi_id], namespace='/audio')
     
-    print(f"Audio session started: {session_id} for Lab Pi: {lab_pi_id}")
+    print(f'Audio session started: {session_id} for Lab Pi: {lab_pi_id}')
     emit('audio_started', {'session_id': session_id})
 
 @socketio.on('audio_stop')
 def handle_audio_stop(data):
-    """Handle audio stop request"""
     session_id = data.get('session_id', 'default')
     if session_id in audio_sessions:
         del audio_sessions[session_id]
-        print(f"Audio session stopped: {session_id}")
+        print(f'Audio session stopped: {session_id}')
     emit('audio_stopped', {'session_id': session_id})
 
 def run_server(port=9000):
-    """Run the audio server"""
-    print(f"Starting Audio Streaming Server on port {port}...")
+    print(f'Starting Audio Streaming Server on port {port}...')
     socketio.run(app, host='0.0.0.0', port=port, debug=False, allow_unsafe_werkzeug=True)
 
 if __name__ == '__main__':

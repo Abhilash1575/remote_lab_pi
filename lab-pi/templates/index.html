@@ -68,20 +68,10 @@ button{padding:8px 10px;border-radius:6px;border:none;cursor:pointer}
     <div class="card">
       <h3>Board & Firmware Upload</h3>
 
-      <label style="display:flex;gap:6px;align-items:center;margin-bottom:8px">
+<label style="display:flex;gap:6px;align-items:center;margin-bottom:8px">
         Board
         <select id="boardType" class="small-input" style="width:160px;margin-left:6px">
-          <!-- <option value="esp32">esp32</option>
-     <option value="esp8266">esp8266</option> -->
-<option value="arduino">arduino</option>
-<!-- <option value="attiny">attiny</option>
-     <option value="stm32">stm32</option>
-     <option value="nucleo_f446re">nucleo_f446re</option>
-     <option value="black_pill">black_pill</option>
-     <option value="tiva">tiva</option>
-     <option value="tms320f28377s">tms320f28377s</option>
-     <option value="msp430">msp430</option>
-     <option value="generic">generic</option> -->
+          <option value="{{ board_type }}">{{ board_type }}</option>
         </select>
       </label>
 
@@ -123,8 +113,7 @@ button{padding:8px 10px;border-radius:6px;border:none;cursor:pointer}
         <button id="refreshPorts" style="background:#333;color:#fff;border-radius:6px;padding:6px 8px">Refresh</button>
       </div>
       <div style="display:flex;gap:8px;margin-bottom:8px">
-        <button class="primary" id="connectBtn">Connect</button>
-        <button class="danger" id="disconnectBtn" disabled>Disconnect</button>
+        <button id="connectBtn" style="background:#2ecc71;color:#fff">Connect</button>
         <button id="clearLog" style="background:#333;color:#fff;border-radius:6px">Clear</button>
       </div>
 
@@ -161,6 +150,7 @@ button{padding:8px 10px;border-radius:6px;border:none;cursor:pointer}
     <div class="card" id="chartCard">
       <h3>Real-time Sensor Data Chart 📈</h3>
       <button class="zoom-btn expand" id="expandChartBtn" title="Open Chart in New Tab">[ ]</button>
+      <button class="zoom-btn" id="expandCROBtn" style="background:#00f0ff;color:#041726" title="Open CRO Oscilloscope">CRO</button>
       <button id="chartZoomReset" class="zoom-btn reset" title="Reset Zoom">■</button>
       <button id="chartZoomOut" class="zoom-btn minus" title="Zoom Out">-</button>
       <button id="chartZoomIn" class="zoom-btn" title="Zoom In">+</button>
@@ -224,9 +214,11 @@ button{padding:8px 10px;border-radius:6px;border:none;cursor:pointer}
 <script>
 const sessionDuration = {{ session_duration | tojson }};
 const sessionEndTimeFromServer = {{ session_end_time | tojson }};
+const boardTypeFromServer = {{ board_type | tojson }};
 console.log('[DEBUG] sessionDuration:', sessionDuration);
 console.log('[DEBUG] sessionEndTimeFromServer:', sessionEndTimeFromServer);
 console.log('[DEBUG] Date.now():', Date.now());
+console.log('[DEBUG] boardTypeFromServer:', boardTypeFromServer);
 </script>
 
 <script>
@@ -427,21 +419,27 @@ baudSelect.addEventListener('change', () => {
   else customBaud.style.display = 'none';
 });
 
+let serialConnected = false;
+
 connectBtn.addEventListener('click', () => {
+  if (serialConnected) {
+    socket.emit('disconnect_serial');
+    feedbackAdd('Requested disconnect.');
+    return;
+  }
+  
   const port = serialPortSelect.value || '/dev/ttyUSB0';
   const baud = (baudSelect.value==='custom') ? parseInt(customBaud.value||'115200') : parseInt(baudSelect.value);
-  connectBtn.disabled = true; disconnectBtn.disabled = true;
+  connectBtn.disabled = true;
+  connectBtn.textContent = 'Connecting...';
   feedbackAdd(`Connecting to ${port}@${baud} ...`);
   socket.emit('connect_serial', { port, baud });
   if(connectTimeoutHandle) clearTimeout(connectTimeoutHandle);
   connectTimeoutHandle = setTimeout(() => {
     feedbackAdd('⚠️ Serial connect timed out (no response).');
-    connectBtn.disabled = false; disconnectBtn.disabled = true;
+    connectBtn.disabled = false;
+    connectBtn.textContent = 'Connect';
   }, 6000);
-});
-
-disconnectBtn.addEventListener('click', () => {
-  socket.emit('disconnect_serial'); feedbackAdd('Requested disconnect.');
 });
 
 sendBtn.addEventListener('click', () => {
@@ -461,17 +459,29 @@ clearLog.addEventListener('click', () => { feedbackList.innerText=''; });
 socket.on('serial_status', (info) => {
   if(connectTimeoutHandle){ clearTimeout(connectTimeoutHandle); connectTimeoutHandle = null; }
   if(info && info.status === 'connected'){
-    connectBtn.disabled = true; disconnectBtn.disabled = false;
+    serialConnected = true;
+    connectBtn.disabled = false;
+    connectBtn.textContent = 'Disconnect';
+    connectBtn.style.background = '#ff6b6b';
+    connectBtn.style.color = '#fff';
     feedbackAdd(`✅ Connected: ${info.port}@${info.baud}`);
     requestPorts(); // refresh port list again
     socket.emit('list_ports'); // optional redundant safety
     updateYAxisFilterOptions([]); // prepare Y-axis dropdowns for dynamic data
 
   } else if(info && info.status === 'error'){
-    connectBtn.disabled = false; disconnectBtn.disabled = true;
+    serialConnected = false;
+    connectBtn.disabled = false;
+    connectBtn.textContent = 'Connect';
+    connectBtn.style.background = '#2ecc71';
+    connectBtn.style.color = '#fff';
     feedbackAdd(`🔴 Serial error: ${info.message || ''}`);
   } else {
-    connectBtn.disabled = false; disconnectBtn.disabled = true;
+    serialConnected = false;
+    connectBtn.disabled = false;
+    connectBtn.textContent = 'Connect';
+    connectBtn.style.background = '#2ecc71';
+    connectBtn.style.color = '#fff';
     feedbackAdd(`🔴 Disconnected`);
   }
 });
@@ -1150,13 +1160,46 @@ socket.on('connect', () => { socketConnected = true; feedbackAdd('Socket connect
 socket.on('disconnect', (reason) => { socketConnected = false; feedbackAdd('Socket disconnected: ' + (reason||'unknown')); });
 socket.on('connect_error', (err) => { feedbackAdd('Socket connect error: ' + String(err)); });
 
+/* ----------------- Real-time board type update from Admin Pi ----------------- */
+socket.on('board_type_updated', (data) => {
+  if (data && data.board_type) {
+    const boardTypeSelect = document.getElementById('boardType');
+    if (boardTypeSelect) {
+      boardTypeSelect.value = data.board_type;
+      feedbackAdd('[board] Board type updated to: ' + data.board_type);
+    }
+  }
+});
+
+// Initialize board type from server on page load
+(function() {
+  if (boardTypeFromServer && boardTypeFromServer !== 'arduino') {
+    const boardTypeSelect = document.getElementById('boardType');
+    if (boardTypeSelect) {
+      boardTypeSelect.value = boardTypeFromServer;
+      console.log('[Board] Initialized to:', boardTypeFromServer);
+    }
+  }
+})();
+
 /* ----------------- Expand chart (open in new tab) ----------------- */
 document.getElementById('expandChartBtn').addEventListener('click', () => {
   if (!sessionKey) {
     feedbackAdd('No active session - please start a session first');
     return;
   }
-  const win = window.open('/chart?key=' + sessionKey, '_blank');
+  const win = window.open('/newchart?key=' + sessionKey, '_blank');
+  if (win) openedWindows.push(win);
+  if (!win) feedbackAdd('Popup blocked - please allow popups');
+});
+
+/* ----------------- Open CRO Oscilloscope ----------------- */
+document.getElementById('expandCROBtn').addEventListener('click', () => {
+  if (!sessionKey) {
+    feedbackAdd('No active session - please start a session first');
+    return;
+  }
+  const win = window.open('/newchart?key=' + sessionKey, '_blank');
   if (win) openedWindows.push(win);
   if (!win) feedbackAdd('Popup blocked - please allow popups');
 });

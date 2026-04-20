@@ -69,6 +69,7 @@ socketio = SocketIO(app, async_mode='eventlet')
 
 # Global active sessions for authorization
 active_sessions = {}
+latest_sensor_data = {}  # Store latest sensor data for CRO page polling
 
 serial_lock = threading.Lock()
 ser = None
@@ -224,17 +225,37 @@ def send_heartbeat():
                                 except:
                                     pass
                             
-                            # Create local session
+                            # Create local session with board_type
                             import time
                             active_sessions[session_key] = {
                                 'start_time': time.time(),
                                 'duration': duration,
                                 'expires_at': time.time() + (duration * 60),
                                 'user_email': session_info.get('user_email'),
-                                'booking_id': session_info.get('booking_id')
+                                'booking_id': session_info.get('booking_id'),
+                                'board_type': session_info.get('board_type', 'arduino')
                             }
                             current_session_key = session_key
                             print(f"[Heartbeat] New session created: {session_key} (duration: {duration} min)")
+                    
+                    # Check for board_type update from Admin Pi - real-time sync
+                    new_board_type = resp_data.get('board_type')
+                    if new_board_type:
+                        # Get current session's board_type
+                        current_board = active_sessions.get(current_session_key, {}).get('board_type', 'arduino') if current_session_key else None
+                        
+                        # If board_type changed, update it and notify frontend
+                        if current_session_key and new_board_type != current_board:
+                            active_sessions[current_session_key]['board_type'] = new_board_type
+                            print(f"[Heartbeat] Board type updated to: {new_board_type}")
+                            
+                            # Emit SocketIO event to notify frontend
+                            try:
+                                from flask_socketio import emit
+                                emit('board_type_updated', {'board_type': new_board_type}, namespace='/')
+                                print(f"[SocketIO] Emitted board_type_updated: {new_board_type}")
+                            except Exception as e:
+                                print(f"[SocketIO] Error emitting board_type_updated: {e}")
                 except Exception as e:
                     print(f"[Heartbeat] Error processing response: {e}")
                 
@@ -481,7 +502,7 @@ def list_serial_ports():
 @app.route('/')
 def index():
     # Provide default values for session variables
-    return render_template('index.html', session_duration=0, session_end_time=0)
+    return render_template('index.html', session_duration=0, session_end_time=0, board_type='arduino')
 
 @app.route('/experiment')
 def experiment():
@@ -519,12 +540,23 @@ def experiment():
             print(f"[Experiment] Creating session from URL: expires_at={expires_at}, duration_minutes={duration_minutes}, current_time={current_time}")
             
             if duration_minutes > 0:
+                # Fetch board_type from Admin Pi via heartbeat or use default
+                board_type = 'arduino'
+                try:
+                    if MASTER_URL:
+                        resp = requests.get(f"{MASTER_URL}/api/lab-pi/{LAB_PI_ID}/board-config", timeout=3)
+                        if resp.status_code == 200:
+                            board_type = resp.json().get('board_type', 'arduino')
+                except:
+                    pass
+                
                 active_sessions[session_key] = {
                     'start_time': time.time(),
                     'duration': duration_minutes,
                     'expires_at': expires_at,
+                    'board_type': board_type
                 }
-                print(f"[Session] Created from URL param: {session_key}, expires at {expires_at}")
+                print(f"[Session] Created from URL param: {session_key}, expires at {expires_at}, board_type: {board_type}")
             else:
                 print(f"[Session] Session from URL already expired: duration_minutes={duration_minutes}")
         except (ValueError, TypeError) as e:
@@ -537,7 +569,8 @@ def experiment():
     print(f"[Experiment] Session found: {session_key}, expires_at={active_sessions[session_key]['expires_at']}")
     duration = active_sessions[session_key]['duration']
     session_end_time = int(active_sessions[session_key]['expires_at'] * 1000)  # JS milliseconds
-    return render_template('index.html', session_duration=duration, session_end_time=session_end_time)
+    board_type = active_sessions[session_key].get('board_type', 'arduino')
+    return render_template('index.html', session_duration=duration, session_end_time=session_end_time, board_type=board_type)
 
 @app.route('/add_session', methods=['POST'])
 def add_session():
@@ -626,6 +659,55 @@ def api_lab_pi_session_end():
     
     return jsonify({'status': 'success'})
 
+@app.route('/api/lab-pi/update-config', methods=['POST'])
+def api_lab_pi_update_config():
+    """
+    Receive real-time configuration updates from Admin Pi.
+    Used for instant board_type, experiment, and SOP updates without service restart.
+    """
+    data = request.get_json()
+    
+    # Update board_type if provided
+    if 'board_type' in data:
+        board_type = data['board_type']
+        
+        # Update all active sessions with new board_type
+        if current_session_key and current_session_key in active_sessions:
+            active_sessions[current_session_key]['board_type'] = board_type
+            print(f"[Config] Board type updated to: {board_type}")
+            
+            # Emit SocketIO event to notify frontend immediately
+            try:
+                from flask import Flask as FlaskClass
+                from flask_socketio import emit
+                socketio.emit('board_type_updated', {'board_type': board_type})
+                print(f"[Config] Emitted board_type_updated via SocketIO")
+            except Exception as e:
+                print(f"[Config] SocketIO emit error: {e}")
+        
+        # Also store in a global variable for immediate access
+        global current_board_type
+        current_board_type = board_type
+    
+    # Update experiment_id if provided
+    if 'experiment_id' in data:
+        global current_experiment_id
+        current_experiment_id = data['experiment_id']
+        print(f"[Config] Experiment ID updated to: {current_experiment_id}")
+    
+    # Update SOP file if provided
+    if 'sop_file' in data:
+        global current_sop_file
+        current_sop_file = data['sop_file']
+        print(f"[Config] SOP file updated to: {current_sop_file}")
+    
+    return jsonify({'status': 'success', 'message': 'Configuration updated'})
+
+# Global variables for current config
+current_board_type = 'arduino'
+current_experiment_id = None
+current_sop_file = None
+
 @app.route('/test_gpio', methods=['GET'])
 def test_gpio():
     """Test GPIO initialization and return debug info"""
@@ -697,6 +779,29 @@ def chart():
     if not session_key or session_key not in active_sessions:
         return render_template('expired_session.html')
     return render_template('chart.html')
+
+@app.route('/newchart')
+def newchart():
+    # Clean up expired sessions
+    current_time = time.time()
+    expired_keys = [k for k, v in active_sessions.items() if current_time > v['expires_at']]
+    for k in expired_keys:
+        del active_sessions[k]
+        subprocess.run(['python3', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'relay_control.py'), 'off'], capture_output=True)
+
+    session_key = request.args.get('key')
+    board_type = 'arduino'
+    
+    # Try to get board_type from session if it exists
+    if session_key and session_key in active_sessions:
+        board_type = active_sessions[session_key].get('board_type', 'arduino')
+    
+    return render_template('newchart.html', board_type=board_type)
+
+@app.route('/api/latest-sensor-data')
+def api_latest_sensor_data():
+    """Return latest sensor data for CRO page polling"""
+    return jsonify(latest_sensor_data)
 
 @app.route('/camera')
 def camera():
@@ -837,22 +942,40 @@ def serve_sop(filename):
         abort(404)
     return send_from_directory(SOP_DIR, filename, as_attachment=True)
 
+# ---------- SOP UPLOAD ----------
+@app.route('/upload-sop', methods=['POST'])
+def upload_sop():
+    if 'file' not in request.files:
+        return jsonify({'success': False, 'error': 'No file provided'}), 400
+    
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'success': False, 'error': 'No file selected'}), 400
+    
+    filename = secure_filename(file.filename)
+    os.makedirs(SOP_DIR, exist_ok=True)
+    file.save(os.path.join(SOP_DIR, filename))
+    print(f'[SOP UPLOAD] Received: {filename}')
+    return jsonify({'success': True, 'filename': filename})
+
 # ---------- MOCK GENERATOR (disabled when serial is connected) ----------
 def mock_data_generator():
     print("Mock data generator STARTED.")
     try:
         while True:
-            # Use generic variable names instead of temp/humid
-            sensor1 = 25.0 + random.uniform(-5.0, 5.0)
+            # Use generic variable names that match Arduino output
+            abhi = 25.0 + random.uniform(-5.0, 5.0)
             sensor2 = 60.0 + random.uniform(-10.0, 10.0)
             sensor3 = 0.5 + random.uniform(-0.2, 0.2)
             sensor4 = 3.3 + random.uniform(-0.5, 0.5)
             payload = {
-                'sensor1': round(sensor1, 2),
+                'abhi': round(abhi, 2),
                 'sensor2': round(sensor2, 2),
                 'sensor3': round(sensor3, 3),
                 'sensor4': round(sensor4, 2)
             }
+            global latest_sensor_data
+            latest_sensor_data = payload
             socketio.emit('sensor_data', payload)
             eventlet.sleep(0.1)  # faster update rate for smoother chart
     except eventlet.greenlet.GreenletExit:
@@ -897,6 +1020,8 @@ def serial_reader_worker(serial_obj):
                                 pass
                 # Keep original keys as sent by Arduino - no predefined mappings
                 if data:
+                    global latest_sensor_data
+                    latest_sensor_data = data
                     socketio.start_background_task(send_sensor_data_to_clients, data)
     except Exception as e:
         socketio.emit('feedback', f'[serial worker stopped] {e}')
