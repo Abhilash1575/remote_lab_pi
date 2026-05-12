@@ -100,7 +100,7 @@ button{padding:8px 10px;border-radius:6px;border:none;cursor:pointer}
       <div style="font-size:13px;color:#9aaab4"></div>
     </div>
 
-    <div class="card">
+    <div class="card" id="serialMonitorCard">
       <h3>Serial Monitor & Connect</h3>
       <div style="display:flex;gap:8px;margin-bottom:8px">
         <select id="baudSelect" class="small-input">
@@ -125,7 +125,7 @@ button{padding:8px 10px;border-radius:6px;border:none;cursor:pointer}
       <div id="feedbackList">waiting for device...</div>
     </div>
 
-    <div class="card">
+    <div class="card" id="dynamicControlsCard">
       <h3>Dynamic Controls</h3>
       <div style="display:flex;gap:8px;margin-bottom:8px">
         <div style="position:relative;display:inline-block">
@@ -148,49 +148,99 @@ button{padding:8px 10px;border-radius:6px;border:none;cursor:pointer}
 
   <div class="right-column">
     <div class="card" id="chartCard">
-      <h3>Real-time Sensor Data Chart 📈</h3>
-      <button class="zoom-btn expand" id="expandChartBtn" title="Open Chart in New Tab">[ ]</button>
-      <button class="zoom-btn" id="expandCROBtn" style="background:#00f0ff;color:#041726" title="Open CRO Oscilloscope">CRO</button>
-      <button id="chartZoomReset" class="zoom-btn reset" title="Reset Zoom">■</button>
-      <button id="chartZoomOut" class="zoom-btn minus" title="Zoom Out">-</button>
-      <button id="chartZoomIn" class="zoom-btn" title="Zoom In">+</button>
-      <div style="display:flex;gap:12px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
-        <label style="display:flex;gap:6px;align-items:center">X-Axis
-          <select id="xAxisFilter" class="small-input" style="width:140px;margin-left:6px">
-            <option value="time">Time (s)</option><option value="samples">Samples</option>
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; flex-wrap:wrap; gap:10px;">
+        <h3 style="margin:0;">Real-time Sensor Data Chart</h3>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <span style="font-size:11px; color:#888; font-weight:bold; text-transform:uppercase; letter-spacing:0.5px;">Current View:</span>
+          <select id="mainUiMode" class="small-input" style="background: #00f0ff; color: #000; font-weight: bold; width: 140px;">
+            <option value="plotter">Serial Plotter</option>
+            <option value="oscilloscope">Oscilloscope</option>
           </select>
-        </label>
-
-        <label style="display:flex;gap:6px;align-items:center">Y-Axis 1
-          <select id="yAxisFilter1" class="small-input" style="width:140px;margin-left:6px"></select>
-        </label>
-
-        <label style="display:flex;gap:6px;align-items:center">Y-Axis 2
-          <select id="yAxisFilter2" class="small-input" style="width:140px;margin-left:6px">
-            <option value="">(Disabled)</option>
-          </select>
-        </label>
-        <button id="exportCSV" style="background:#444;color:#fff;border-radius:6px;padding:8px 10px">Export CSV</button>
+          <!-- Buttons moved inside flex container to avoid overlap -->
+          <div id="mainZoomButtons" style="display:flex; gap:4px;">
+            <button id="chartZoomReset" style="background:#f39c12; color:#101018; font-weight:700; padding:4px 8px; border-radius:4px;" title="Reset Zoom">■</button>
+            <button id="chartZoomOut" style="background:#00f0ff; color:#041726; font-weight:700; padding:4px 8px; border-radius:4px;" title="Zoom Out">-</button>
+            <button id="chartZoomIn" style="background:#00f0ff; color:#041726; font-weight:700; padding:4px 8px; border-radius:4px;" title="Zoom In">+</button>
+          </div>
+          <button id="expandChartBtn" style="background:#00f0ff; color:#041726; font-weight:700; padding:4px 8px; border-radius:4px;" title="Open Chart in New Tab">[ ]</button>
+        </div>
       </div>
+      <!-- Removed original absolute buttons -->
+      <!-- Wrapper for Plotter-only controls -->
+      <div id="mainPlotterControls">
+        <div style="display:flex;gap:12px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
+          <label style="display:flex;gap:6px;align-items:center">X-Axis
+            <select id="xAxisFilter" class="small-input" style="width:140px;margin-left:6px">
+              <option value="time">Time (s)</option><option value="samples">Samples</option>
+            </select>
+          </label>
 
-      <div style="display:flex;gap:12px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
-        <label>Scaling: <button id="mainScalingToggle" class="primary">Auto</button></label>
-        <div id="mainManualControls" style="display:none; gap:8px; display:flex; align-items:center;">
-          <label>Y1 Max: <input type="number" id="mainY1Max" class="small-input" value="100" min="0" step="10"></label>
-          <button id="mainY1Plus" class="primary">+</button>
-          <button id="mainY1Minus" class="primary">-</button>
-          <label>Y2 Max: <input type="number" id="mainY2Max" class="small-input" value="100" min="0" step="10"></label>
-          <button id="mainY2Plus" class="primary">+</button>
-          <button id="mainY2Minus" class="primary">-</button>
+          <label style="display:flex;gap:6px;align-items:center">Y-Axis 1
+            <select id="yAxisFilter1" class="small-input" style="width:140px;margin-left:6px"></select>
+          </label>
+
+          <label style="display:flex;gap:6px;align-items:center">Y-Axis 2
+            <select id="yAxisFilter2" class="small-input" style="width:140px;margin-left:6px">
+              <option value="">(Disabled)</option>
+            </select>
+          </label>
+          <button id="exportCSV" style="background:#444;color:#fff;border-radius:6px;padding:8px 10px">Export CSV</button>
+        </div>
+
+        <div style="display:flex;gap:12px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
+          <label>Scaling: <button id="mainScalingToggle" class="primary">Auto</button></label>
+          <div id="mainManualControls" style="display:none; gap:8px; display:flex; align-items:center;">
+            <label>Y1 Max: <input type="number" id="mainY1Max" class="small-input" value="100" min="0" step="10"></label>
+            <button id="mainY1Plus" class="primary">+</button>
+            <button id="mainY1Minus" class="primary">-</button>
+            <label>Y2 Max: <input type="number" id="mainY2Max" class="small-input" value="100" min="0" step="10"></label>
+            <button id="mainY2Plus" class="primary">+</button>
+            <button id="mainY2Minus" class="primary">-</button>
+          </div>
+        </div>
+        <div style="display:flex;gap:12px;margin-top:8px;align-items:center">
+          <button id="pauseChart" class="primary">Pause Chart</button>
+          <div class="label-muted" id="chartStatus">Running — last update: --</div>
         </div>
       </div>
 
-      <div style="border-radius:8px;overflow:hidden;background:#0e1116;padding:6px">
-        <canvas id="mainChart"></canvas>
+      <!-- Wrapper for OSC-only controls (initially hidden) -->
+      <div id="mainOscControls" style="display:none; gap:12px; align-items:center; margin-bottom:8px; flex-wrap:wrap;">
+        <label>Trig V: <input type="number" id="mainOscTrigV" class="small-input" value="1.65" step="0.05" style="width:60px;"></label>
+        <label>Edge: 
+          <select id="mainOscEdge" class="small-input">
+            <option value="rising">Rising ↑</option>
+            <option value="falling">Falling ↓</option>
+          </select>
+        </label>
+        <label>V-Scale: 
+          <select id="mainOscVScale" class="small-input" style="width:60px;">
+            <option value="0.5">0.5x</option>
+            <option value="1.0" selected>1x</option>
+            <option value="2.0">2x</option>
+            <option value="5.0">5x</option>
+          </select>
+        </label>
+        <label>V-Pos: <input type="range" id="mainOscVPos" min="-1.5" max="1.5" step="0.1" value="0" style="width:70px;"></label>
+        <label>H-Scale: 
+          <select id="mainOscHScale" class="small-input" style="width:60px;">
+            <option value="0.5">0.5x</option>
+            <option value="1.0" selected>1x</option>
+            <option value="2.0">2x</option>
+            <option value="5.0">5x</option>
+          </select>
+        </label>
+        <button id="mainOscAutoBtn" class="primary" style="padding:4px 8px;">Auto</button>
+        <button id="mainOscFreezeBtn" class="primary" style="padding:4px 8px; background:#2ecc71;">Freeze</button>
+        <div id="mainOscStats" style="font-family:monospace; font-size:12px; color:#00ff7f; display:flex; gap:10px;">
+          <span>Freq: <span id="mainOscFreq">-</span></span>
+          <span>Vpp: <span id="mainOscVpp">-</span></span>
+        </div>
       </div>
-      <div style="display:flex;gap:12px;margin-top:8px;align-items:center">
-        <button id="pauseChart" class="primary">Pause Chart</button>
-        <div class="label-muted" id="chartStatus">Running — last update: --</div>
+
+      <div style="border-radius:8px;overflow:hidden;background:#0e1116;padding:6px; height:320px; position:relative;">
+        <canvas id="mainChart"></canvas>
+        <canvas id="mainOscCanvas" style="display:none; width:100%; height:100%;"></canvas>
       </div>
     </div>
 
@@ -222,22 +272,160 @@ console.log('[DEBUG] boardTypeFromServer:', boardTypeFromServer);
 </script>
 
 <script>
-// Dynamic host configuration - automatically detects IP and ports
-const BASE_URL = window.location.origin;  // e.g., http://192.168.1.100:5000
-const VIDEO_PORT = 8080;  // Camera stream port - change if different
-const AUDIO_PORT = 9000;  // Audio server port - change if different
-
-// Video stream URL - uses same host as current page but different port for camera
-const videoUrl = `${window.location.protocol}//${window.location.hostname}:${VIDEO_PORT}/?action=stream&resolution=1920x1080&quality=100`;
-
-// Audio server URL - uses same host but audio port
-const audioServerUrl = `${window.location.protocol}//${window.location.hostname}:${AUDIO_PORT}`;
-
-console.log('Video URL:', videoUrl);
-console.log('Audio server URL:', audioServerUrl);
-
 /* ----------------- SOCKET.IO ----------------- */
 const socket = io.connect(window.location.origin, { transports: ['websocket', 'polling'] });
+
+// Dynamic host configuration - automatically detects IP and ports
+const BASE_URL = window.location.origin;
+const VIDEO_PORT = 8080;
+const AUDIO_PORT = 9000;
+
+// Video stream URL
+const videoUrl = `${window.location.protocol}//${window.location.hostname}:${VIDEO_PORT}/?action=stream&resolution=1920x1080&quality=100`;
+const audioServerUrl = `${window.location.protocol}//${window.location.hostname}:${AUDIO_PORT}`;
+
+// --- MODE SWITCHING ---
+const mainUiMode = document.getElementById('mainUiMode');
+const mainPlotterControls = document.getElementById('mainPlotterControls');
+const mainOscControls = document.getElementById('mainOscControls');
+const mainChartCanvas = document.getElementById('mainChart');
+const mainOscCanvas = document.getElementById('mainOscCanvas');
+const mainZoomButtons = document.getElementById('mainZoomButtons');
+
+function updateModeVisibility() {
+  const mode = mainUiMode.value;
+  console.log('[Mode] Switching to:', mode);
+  if (mode === 'plotter') {
+    mainPlotterControls.style.display = 'block';
+    mainOscControls.style.display = 'none';
+    mainChartCanvas.style.display = 'block';
+    mainOscCanvas.style.display = 'none';
+    if(mainZoomButtons) mainZoomButtons.style.display = 'flex';
+  } else {
+    mainPlotterControls.style.display = 'none';
+    mainOscControls.style.display = 'flex';
+    mainChartCanvas.style.display = 'none';
+    mainOscCanvas.style.display = 'block';
+    if(mainZoomButtons) mainZoomButtons.style.display = 'none';
+    
+    // Ensure canvas is sized after display:block
+    setTimeout(resizeMainOscCanvas, 50); 
+  }
+}
+
+mainUiMode.addEventListener('change', updateModeVisibility);
+
+// --- MAIN OSCILLOSCOPE LOGIC ---
+const mainOscCtx = mainOscCanvas.getContext('2d');
+let lastMainOscData = null;
+
+function resizeMainOscCanvas() {
+  if (mainOscCanvas.offsetParent !== null) { // Only resize if visible
+    mainOscCanvas.width = mainOscCanvas.clientWidth;
+    mainOscCanvas.height = mainOscCanvas.clientHeight;
+    console.log('[OSC] Main Canvas resized:', mainOscCanvas.width, 'x', mainOscCanvas.height);
+  }
+}
+window.addEventListener('resize', resizeMainOscCanvas);
+
+socket.on('osc_data', (data) => {
+  if (mainUiMode.value !== 'oscilloscope') return;
+  lastMainOscData = data;
+  const freqEl = document.getElementById('mainOscFreq');
+  const vppEl = document.getElementById('mainOscVpp');
+  if(freqEl) freqEl.textContent = data.freq ? (data.freq > 1000 ? (data.freq/1000).toFixed(2)+'k' : data.freq.toFixed(1)) + ' Hz' : '-';
+  if(vppEl) vppEl.textContent = data.vpp ? data.vpp.toFixed(2) + ' V' : '-';
+});
+
+function renderMainOsc() {
+  if (mainUiMode.value === 'oscilloscope' && lastMainOscData) {
+    const { samples } = lastMainOscData;
+    const w = mainOscCanvas.width;
+    const h = mainOscCanvas.height;
+    if (w > 0 && h > 0) {
+      mainOscCtx.clearRect(0, 0, w, h);
+      
+      const vScale = parseFloat(document.getElementById('mainOscVScale').value || 1.0);
+      const vPos = parseFloat(document.getElementById('mainOscVPos').value || 0);
+      const hScale = parseFloat(document.getElementById('mainOscHScale').value || 1.0);
+
+      const voltToY = (v) => {
+        const scaledV = (v - 1.65) * vScale + 1.65 + vPos;
+        return h - (scaledV / 3.3) * h;
+      };
+
+      // Grid
+      mainOscCtx.strokeStyle = '#3a3a5a';
+      mainOscCtx.lineWidth = 1;
+      for (let x = 0; x <= w; x += w / 10) { mainOscCtx.beginPath(); mainOscCtx.moveTo(x, 0); mainOscCtx.lineTo(x, h); mainOscCtx.stroke(); }
+      for (let y = 0; y <= h; y += h / 8) { mainOscCtx.beginPath(); mainOscCtx.moveTo(0, y); mainOscCtx.lineTo(w, y); mainOscCtx.stroke(); }
+
+      // 0V Level (1.65V offset)
+      const zeroY = voltToY(1.65);
+      mainOscCtx.strokeStyle = '#ffff00';
+      mainOscCtx.lineWidth = 1;
+      mainOscCtx.setLineDash([4, 4]);
+      mainOscCtx.beginPath(); mainOscCtx.moveTo(0, zeroY); mainOscCtx.lineTo(w, zeroY); mainOscCtx.stroke();
+      mainOscCtx.setLineDash([]);
+      mainOscCtx.fillStyle = '#ffff00';
+      mainOscCtx.font = '10px monospace';
+      mainOscCtx.fillText('1.65V (0V)', 10, zeroY - 5);
+
+      // Trigger Level
+      const trigV = parseFloat(document.getElementById('mainOscTrigV').value || 1.65);
+      const trigY = voltToY(trigV);
+      mainOscCtx.strokeStyle = '#ffff00';
+      mainOscCtx.lineWidth = 1;
+      mainOscCtx.beginPath(); mainOscCtx.moveTo(0, trigY); mainOscCtx.lineTo(w, trigY); mainOscCtx.stroke();
+
+      // Waveform
+      mainOscCtx.strokeStyle = '#00f0ff';
+      mainOscCtx.lineWidth = 2;
+      mainOscCtx.beginPath();
+      
+      const visibleCount = Math.floor(samples.length / hScale);
+      for (let i = 0; i < visibleCount; i++) {
+        const x = (i / (visibleCount - 1)) * w;
+        const y = voltToY(samples[i]);
+        if (i === 0) mainOscCtx.moveTo(x, y); else mainOscCtx.lineTo(x, y);
+      }
+      mainOscCtx.stroke();
+    }
+  }
+  requestAnimationFrame(renderMainOsc);
+}
+
+// Start rendering loop and initialize visibility
+requestAnimationFrame(renderMainOsc);
+updateModeVisibility();
+
+function syncMainOscSettings() {
+  socket.emit('update_osc_settings', {
+    trig_v: parseFloat(document.getElementById('mainOscTrigV').value),
+    rising: document.getElementById('mainOscEdge').value === 'rising'
+  });
+}
+['mainOscTrigV', 'mainOscEdge', 'mainOscVScale', 'mainOscVPos', 'mainOscHScale'].forEach(id => {
+  const el = document.getElementById(id);
+  if(el) el.addEventListener('change', syncMainOscSettings);
+});
+document.getElementById('mainOscAutoBtn').addEventListener('click', () => socket.emit('osc_auto_level'));
+
+let mainOscIsFrozen = false;
+const mainOscFreezeBtn = document.getElementById('mainOscFreezeBtn');
+mainOscFreezeBtn.addEventListener('click', () => {
+  mainOscIsFrozen = !mainOscIsFrozen;
+  socket.emit('update_osc_settings', { freeze: mainOscIsFrozen });
+  mainOscFreezeBtn.innerText = mainOscIsFrozen ? 'Frozen' : 'Freeze';
+  mainOscFreezeBtn.style.background = mainOscIsFrozen ? '#ff6b6b' : '#2ecc71';
+});
+
+socket.on('osc_settings_sync', (data) => {
+  if (data.trig_v !== undefined) {
+    const el = document.getElementById('mainOscTrigV');
+    if(el) el.value = data.trig_v;
+  }
+});
 
 /* ----------------- UI refs ----------------- */
 const flashBtn = document.getElementById('flashBtn');
@@ -1188,18 +1376,14 @@ document.getElementById('expandChartBtn').addEventListener('click', () => {
     feedbackAdd('No active session - please start a session first');
     return;
   }
-  const win = window.open('/newchart?key=' + sessionKey, '_blank');
-  if (win) openedWindows.push(win);
-  if (!win) feedbackAdd('Popup blocked - please allow popups');
-});
-
-/* ----------------- Open CRO Oscilloscope ----------------- */
-document.getElementById('expandCROBtn').addEventListener('click', () => {
-  if (!sessionKey) {
-    feedbackAdd('No active session - please start a session first');
-    return;
+  const mode = document.getElementById('mainUiMode').value;
+  let url = '';
+  if (mode === 'oscilloscope') {
+    url = `/oscilloscope?key=${sessionKey}`;
+  } else {
+    url = `/newchart?key=${sessionKey}`;
   }
-  const win = window.open('/newchart?key=' + sessionKey, '_blank');
+  const win = window.open(url, '_blank');
   if (win) openedWindows.push(win);
   if (!win) feedbackAdd('Popup blocked - please allow popups');
 });

@@ -40,6 +40,8 @@ import eventlet
 eventlet.monkey_patch()
 
 import os, time, subprocess, threading, queue, tempfile, re, random, json, math, asyncio
+import numpy as np
+from scipy.signal import medfilt, savgol_filter
 import requests
 from flask import Flask, send_from_directory, request, jsonify, render_template, abort
 from flask_socketio import SocketIO, emit
@@ -51,6 +53,45 @@ try:
 except Exception as e:
     serial = None
     list_ports = None
+
+import struct
+
+# ---------- OSCILLOSCOPE CONFIG ----------
+OSC_PORT = None
+OSC_BAUD = 921600
+OSC_SAMPLE_RATE = 40000
+OSC_HISTORY_SIZE = OSC_SAMPLE_RATE * 5  # 5 seconds
+osc_history = np.zeros(OSC_HISTORY_SIZE, dtype=np.float64)
+osc_hist_idx = 0
+osc_lock = threading.Lock()
+osc_ser = None
+osc_stop = threading.Event()
+
+osc_settings = {
+    'trig_v': 1.65,
+    'hyst': 0.15,
+    'rising': True,
+    'samples': 1000,
+    'smooth': False,
+    'freeze': False,
+    'pre_trigger': 200
+}
+
+def detect_osc_port():
+    """Detect ESP32 port by looking for high baud rate capability or specific VID/PIDs"""
+    global OSC_PORT
+    if list_ports is None: return None
+    ports = list_ports.comports()
+    for p in ports:
+        # Common ESP32/Arduino USB-Serial VID:PIDs
+        # CP210x: 10c4:ea60, CH340: 1a86:7523
+        if any(vid_pid in (p.vid, p.pid) for vid_pid in [0x10c4, 0xea60, 0x1a86, 0x7523]):
+             OSC_PORT = p.device
+             print(f"[OSC] Auto-detected ESP32 at {OSC_PORT}")
+             return OSC_PORT
+    return None
+
+detect_osc_port()
 
 from werkzeug.utils import secure_filename
 
@@ -497,7 +538,9 @@ def relay_off():
 def list_serial_ports():
     if list_ports is None:
         return []
-    return [p.device for p in list_ports.comports()]
+    all_ports = list_ports.comports()
+    # Filter out the Oscilloscope port
+    return [p.device for p in all_ports if p.device != OSC_PORT]
 
 @app.route('/')
 def index():
@@ -798,6 +841,21 @@ def newchart():
     
     return render_template('newchart.html', board_type=board_type)
 
+@app.route('/oscilloscope')
+def oscilloscope():
+    # Clean up expired sessions
+    current_time = time.time()
+    expired_keys = [k for k, v in active_sessions.items() if current_time > v['expires_at']]
+    for k in expired_keys:
+        del active_sessions[k]
+        subprocess.run(['python3', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'relay_control.py'), 'off'], capture_output=True)
+
+    session_key = request.args.get('key')
+    if not session_key or session_key not in active_sessions:
+        return render_template('expired_session.html')
+    
+    return render_template('oscilloscope.html')
+
 @app.route('/api/latest-sensor-data')
 def api_latest_sensor_data():
     """Return latest sensor data for CRO page polling"""
@@ -957,6 +1015,189 @@ def upload_sop():
     file.save(os.path.join(SOP_DIR, filename))
     print(f'[SOP UPLOAD] Received: {filename}')
     return jsonify({'success': True, 'filename': filename})
+
+# ---------- OSCILLOSCOPE WORKER ----------
+# ---------- OSCILLOSCOPE WORKER ----------
+def clean_osc_data(data):
+    if len(data) < 7: return data
+    try:
+        d = medfilt(data, kernel_size=3)
+        d = savgol_filter(d, window_length=7, polyorder=3)
+        return d
+    except:
+        return data
+
+def find_osc_trigger(data, level, hysteresis, rising=True):
+    pre_trigger = osc_settings['pre_trigger']
+    if len(data) < pre_trigger + 10: return None
+    armed = False
+    for i in range(pre_trigger, len(data) - 1):
+        if rising:
+            if not armed and data[i] < (level - hysteresis): armed = True
+            if armed and data[i - 1] < level <= data[i]: return i
+        else:
+            if not armed and data[i] > (level + hysteresis): armed = True
+            if armed and data[i - 1] > level >= data[i]: return i
+    return None
+
+def get_latest_osc(n):
+    global osc_history, osc_hist_idx
+    n = min(n, OSC_HISTORY_SIZE)
+    with osc_lock:
+        start = (osc_hist_idx - n) % OSC_HISTORY_SIZE
+        if start < osc_hist_idx:
+            return osc_history[start:osc_hist_idx].copy()
+        return np.concatenate([osc_history[start:], osc_history[:osc_hist_idx]])
+
+def measure_osc_frequency(data):
+    if len(data) < 64: return None
+    try:
+        n = len(data)
+        nfft = n * 4
+        windowed = (data - np.mean(data)) * np.hanning(n)
+        fft = np.abs(np.fft.rfft(windowed, n=nfft))
+        freqs = np.fft.rfftfreq(nfft, 1.0 / OSC_SAMPLE_RATE)
+        fft[0] = 0
+        peak = np.argmax(fft)
+        return float(freqs[peak]) if peak > 0 else None
+    except:
+        return None
+
+def osc_worker():
+    global osc_history, osc_hist_idx, osc_ser, OSC_PORT
+    print(f"[OSC] Worker started. Port: {OSC_PORT}")
+    
+    raw = bytearray()
+    VREF = 3.3
+    last_emit_time = 0
+    
+    while not osc_stop.is_set():
+        if OSC_PORT is None:
+            detect_osc_port()
+            eventlet.sleep(1)
+            continue
+            
+        try:
+            if osc_ser is None or not osc_ser.is_open:
+                osc_ser = serial.Serial(OSC_PORT, OSC_BAUD, timeout=0.01)
+                print(f"[OSC] Connected to {OSC_PORT}")
+            
+            # --- 1. DRAIN SERIAL (High Speed) ---
+            # Wait for at least 1KB or 10ms to reduce overhead
+            if osc_ser.in_waiting < 1024:
+                eventlet.sleep(0.01)
+                
+            avail = osc_ser.in_waiting
+            if avail > 0:
+                chunk = osc_ser.read(avail)
+                raw += chunk
+                
+                # Fast Packet Parsing
+                while True:
+                    idx = raw.find(b'\xAA\x55')
+                    if idx == -1:
+                        if len(raw) > 2: raw = raw[-2:]
+                        break
+                    
+                    if idx > 0: raw = raw[idx:]
+                    if len(raw) < 4: break
+                    
+                    count = struct.unpack_from('<H', raw, 2)[0]
+                    if count == 0 or count > 1024:
+                        raw = raw[2:]
+                        continue
+                    
+                    pkt_len = 4 + count * 2
+                    if len(raw) < pkt_len: break
+                    
+                    # Fast parse
+                    samples = np.frombuffer(raw, dtype='<u2', count=count, offset=4)
+                    raw = raw[pkt_len:]
+                    
+                    volts = samples.astype(np.float64) * (VREF / 4095.0)
+                    n = len(volts)
+                    with osc_lock:
+                        end = osc_hist_idx + n
+                        if end <= OSC_HISTORY_SIZE:
+                            osc_history[osc_hist_idx:end] = volts
+                        else:
+                            split = OSC_HISTORY_SIZE - osc_hist_idx
+                            osc_history[osc_hist_idx:] = volts[:split]
+                            osc_history[:n - split] = volts[split:]
+                        osc_hist_idx = end % OSC_HISTORY_SIZE
+
+            # --- 2. EMIT (Throttled Snapshot @ 10 FPS) ---
+            now = time.time()
+            if now - last_emit_time > 0.1: # 100ms delay for "Slower Screening"
+                last_emit_time = now
+                if not osc_settings['freeze']:
+                    disp_n = osc_settings['samples']
+                    pad = 16
+                    search_n = disp_n + osc_settings['pre_trigger'] + 1024 + pad
+                    data = get_latest_osc(min(search_n, OSC_HISTORY_SIZE))
+                    
+                    if len(data) >= disp_n:
+                        trig_idx = find_osc_trigger(data, osc_settings['trig_v'], osc_settings['hyst'], osc_settings['rising'])
+                        
+                        if trig_idx is not None and (trig_idx - osc_settings['pre_trigger']) >= pad:
+                            start = trig_idx - osc_settings['pre_trigger']
+                            slice_start = start - pad
+                            slice_end = start + disp_n + pad
+                            
+                            if slice_end <= len(data):
+                                display_raw = data[slice_start : slice_end].copy()
+                                if osc_settings['smooth']:
+                                    display_clean = clean_osc_data(display_raw)
+                                else:
+                                    display_clean = display_raw
+                                display = display_clean[pad : pad + disp_n]
+                                triggered = True
+                            else:
+                                display = data[-disp_n:].copy()
+                                triggered = False
+                        else:
+                            display = data[-disp_n:].copy()
+                            triggered = False
+                        
+                        vmin = float(np.min(display))
+                        vmax = float(np.max(display))
+                        vpp = vmax - vmin
+                        freq = measure_osc_frequency(display)
+                        
+                        socketio.emit('osc_data', {
+                            'samples': display.tolist(),
+                            'triggered': triggered,
+                            'vmin': vmin,
+                            'vmax': vmax,
+                            'vpp': vpp,
+                            'freq': freq,
+                            'ts': time.time()
+                        })
+            
+            eventlet.sleep(0.001)
+            
+        except Exception as e:
+            print(f"[OSC] Error: {e}")
+            if osc_ser:
+                try: osc_ser.close()
+                except: pass
+            osc_ser = None
+            eventlet.sleep(1)
+
+# ---------- SOCKET HANDLERS ----------
+@socketio.on('update_osc_settings')
+def handle_update_osc_settings(data):
+    global osc_settings
+    osc_settings.update(data)
+    print(f"[OSC] Settings updated: {osc_settings}")
+
+@socketio.on('osc_auto_level')
+def handle_osc_auto_level():
+    data = get_latest_osc(osc_settings['samples'])
+    if len(data) > 10:
+        mid = float((np.min(data) + np.max(data)) / 2.0)
+        osc_settings['trig_v'] = round(mid, 2)
+        socketio.emit('osc_settings_sync', {'trig_v': osc_settings['trig_v']})
 
 # ---------- MOCK GENERATOR (disabled when serial is connected) ----------
 def mock_data_generator():
@@ -1138,6 +1379,9 @@ if __name__ == '__main__':
     print(f"[Heartbeat] Starting heartbeat thread (Lab Pi ID: {LAB_PI_ID})")
     heartbeat_thread = threading.Thread(target=heartbeat_loop, daemon=True)
     heartbeat_thread.start()
+    
+    # Start Oscilloscope worker
+    eventlet.spawn(osc_worker)
     
     audio_running = check_port(9000, "Audio server")
     if not audio_running:
