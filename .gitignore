@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 lab-pi/ui_config.json
 lab-pi/admin_password.hash
+.env
 battery_status.json
 ups_log.csv
 
