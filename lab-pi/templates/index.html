@@ -48,6 +48,7 @@ button{padding:8px 10px;border-radius:6px;border:none;cursor:pointer}
 /* small layout tweaks for the new button card */
 .left-controls-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .left-controls-row button{flex:1}
+.admin-disabled{opacity:0.45 !important;cursor:not-allowed !important;filter:grayscale(40%)}
 </style>
 </head>
 <body>
@@ -70,14 +71,14 @@ button{padding:8px 10px;border-radius:6px;border:none;cursor:pointer}
 
 <label style="display:flex;gap:6px;align-items:center;margin-bottom:8px">
         Board
-        <select id="boardType" class="small-input" style="width:160px;margin-left:6px">
+        <select id="boardType" class="small-input" style="width:160px;margin-left:6px" {{ 'disabled' if not ui_config.controls.board_select }}>
           <option value="{{ board_type }}">{{ board_type }}</option>
         </select>
       </label>
 
-      <input id="firmwareInput" type="file" accept=".bin,.hex,.out,.txt,.dfu" style="width:100%;margin-bottom:8px">
+      <input id="firmwareInput" type="file" accept=".bin,.hex,.out,.txt,.dfu" style="width:100%;margin-bottom:8px" {{ 'disabled' if not ui_config.controls.flash_firmware }}>
       <div style="display:flex;gap:8px;margin-bottom:8px">
-        <button class="primary" id="flashBtn">Flash Firmware</button>
+        <button class="primary" id="flashBtn" {{ 'disabled' if not ui_config.controls.flash_firmware }}>Flash Firmware</button>
         <button id="cancelFlash" style="background:#444;color:#fff;border-radius:6px;padding:8px 10px">Cancel</button>
       </div>
       <div id="progressBar"><div id="progress"></div></div>
@@ -89,18 +90,18 @@ button{padding:8px 10px;border-radius:6px;border:none;cursor:pointer}
       <h3>Quick Actions</h3>
       <div class="left-controls-row" style="margin-bottom:8px">
         <!-- Factory Reset (red danger button as requested - option 1) -->
-        <button id="factoryResetBtn" class="danger">Factory Reset</button>
+        <button id="factoryResetBtn" class="danger" {{ 'disabled' if not ui_config.controls.factory_reset }}>Factory Reset</button>
 
         <!-- View / Download SOP -->
         <button id="viewSopBtn" class="primary">View Manual</button>
 
         <!-- Power Supply Control -->
-        <button id="powerSupplyBtn" class="primary" style="background:#2ecc71; color:#1c1c2b">Power Supply OFF</button>
+        <button id="powerSupplyBtn" class="primary" style="background:#2ecc71; color:#1c1c2b" {{ 'disabled' if not ui_config.controls.power_supply }}>Power Supply OFF</button>
       </div>
       <div style="font-size:13px;color:#9aaab4"></div>
     </div>
 
-    <div class="card" id="serialMonitorCard">
+    <div class="card" id="serialMonitorCard" style="{{ 'display:none' if not ui_config.controls.serial_monitor_section }}">
       <h3>Serial Monitor & Connect</h3>
       <div style="display:flex;gap:8px;margin-bottom:8px">
         <select id="baudSelect" class="small-input">
@@ -113,7 +114,7 @@ button{padding:8px 10px;border-radius:6px;border:none;cursor:pointer}
         <button id="refreshPorts" style="background:#333;color:#fff;border-radius:6px;padding:6px 8px">Refresh</button>
       </div>
       <div style="display:flex;gap:8px;margin-bottom:8px">
-        <button id="connectBtn" style="background:#2ecc71;color:#fff">Connect</button>
+        <button id="connectBtn" style="background:#2ecc71;color:#fff" {{ 'disabled' if not ui_config.controls.serial_connect }}>Connect</button>
         <button id="clearLog" style="background:#333;color:#fff;border-radius:6px">Clear</button>
       </div>
 
@@ -125,20 +126,20 @@ button{padding:8px 10px;border-radius:6px;border:none;cursor:pointer}
       <div id="feedbackList">waiting for device...</div>
     </div>
 
-    <div class="card" id="dynamicControlsCard">
+    <div class="card" id="dynamicControlsCard" style="{{ 'display:none' if not ui_config.defaults.dynamic_controls_visible }}">
       <h3>Dynamic Controls</h3>
       <div style="display:flex;gap:8px;margin-bottom:8px">
         <div style="position:relative;display:inline-block">
-          <button id="addSlider" class="primary">Add Slider ⏷</button>
-          <div id="varDropdown" class="var-dropdown"></div>
+          <button id="addSlider" class="primary">Add Slider</button>
         </div>
 
         <div style="position:relative;display:inline-block">
-          <button id="addButton" class="primary">Add Button ⏷</button>
+          <button id="addButton" class="primary">Add Button</button>
         </div>
 
         <div style="position:relative;display:inline-block">
           <button id="addReadout" class="primary">Add Readout ⏷</button>
+          <div id="varDropdown" class="var-dropdown"></div>
         </div>
       </div>
       <div id="dynamicControls"></div>
@@ -147,14 +148,14 @@ button{padding:8px 10px;border-radius:6px;border:none;cursor:pointer}
   </div>
 
   <div class="right-column">
-    <div class="card" id="chartCard">
+    <div class="card" id="chartCard" style="{{ 'display:none' if not (ui_config.controls.serial_plotter or ui_config.controls.oscilloscope) }}">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; flex-wrap:wrap; gap:10px;">
         <h3 style="margin:0;">Real-time Sensor Data Chart</h3>
         <div style="display:flex; gap:8px; align-items:center;">
           <span style="font-size:11px; color:#888; font-weight:bold; text-transform:uppercase; letter-spacing:0.5px;">Current View:</span>
           <select id="mainUiMode" class="small-input" style="background: #00f0ff; color: #000; font-weight: bold; width: 140px;">
-            <option value="plotter">Serial Plotter</option>
-            <option value="oscilloscope">Oscilloscope</option>
+            {% if ui_config.controls.serial_plotter %}<option value="plotter" {{ 'selected' if ui_config.defaults.main_view == 'plotter' }}>Serial Plotter</option>{% endif %}
+            {% if ui_config.controls.oscilloscope %}<option value="oscilloscope" {{ 'selected' if ui_config.defaults.main_view == 'oscilloscope' }}>Oscilloscope</option>{% endif %}
           </select>
           <!-- Buttons moved inside flex container to avoid overlap -->
           <div id="mainZoomButtons" style="display:flex; gap:4px;">
@@ -206,6 +207,14 @@ button{padding:8px 10px;border-radius:6px;border:none;cursor:pointer}
 
       <!-- Wrapper for OSC-only controls (initially hidden) -->
       <div id="mainOscControls" style="display:none; gap:12px; align-items:center; margin-bottom:8px; flex-wrap:wrap;">
+        <span style="display:flex;align-items:center;gap:4px;font-size:11px;color:#FFDD00;font-weight:600;"><span style="width:8px;height:8px;border-radius:50%;background:#FFDD00;display:inline-block;"></span>CH1</span>
+        <span style="display:flex;align-items:center;gap:4px;font-size:11px;color:#00FFFF;font-weight:600;"><span style="width:8px;height:8px;border-radius:50%;background:#00FFFF;display:inline-block;"></span>CH2</span>
+        <label>Trig Src:
+          <select id="mainOscTrigSrc" class="small-input" style="width:60px;">
+            <option value="0">CH1</option>
+            <option value="1">CH2</option>
+          </select>
+        </label>
         <label>Trig V: <input type="number" id="mainOscTrigV" class="small-input" value="1.65" step="0.05" style="width:60px;"></label>
         <label>Edge: 
           <select id="mainOscEdge" class="small-input">
@@ -224,7 +233,6 @@ button{padding:8px 10px;border-radius:6px;border:none;cursor:pointer}
         <label>V-Pos: <input type="range" id="mainOscVPos" min="-1.5" max="1.5" step="0.1" value="0" style="width:70px;"></label>
         <label>H-Scale: 
           <select id="mainOscHScale" class="small-input" style="width:60px;">
-            <option value="0.5">0.5x</option>
             <option value="1.0" selected>1x</option>
             <option value="2.0">2x</option>
             <option value="5.0">5x</option>
@@ -265,6 +273,7 @@ button{padding:8px 10px;border-radius:6px;border:none;cursor:pointer}
 const sessionDuration = {{ session_duration | tojson }};
 const sessionEndTimeFromServer = {{ session_end_time | tojson }};
 const boardTypeFromServer = {{ board_type | tojson }};
+const uiConfigFromServer = {{ ui_config | tojson }};
 console.log('[DEBUG] sessionDuration:', sessionDuration);
 console.log('[DEBUG] sessionEndTimeFromServer:', sessionEndTimeFromServer);
 console.log('[DEBUG] Date.now():', Date.now());
@@ -333,18 +342,33 @@ socket.on('osc_data', (data) => {
   lastMainOscData = data;
   const freqEl = document.getElementById('mainOscFreq');
   const vppEl = document.getElementById('mainOscVpp');
-  if(freqEl) freqEl.textContent = data.freq ? (data.freq > 1000 ? (data.freq/1000).toFixed(2)+'k' : data.freq.toFixed(1)) + ' Hz' : '-';
-  if(vppEl) vppEl.textContent = data.vpp ? data.vpp.toFixed(2) + ' V' : '-';
+  const srcIsCh2 = document.getElementById('mainOscTrigSrc').value === '1';
+  const freq = srcIsCh2 ? data.ch2_freq : data.ch1_freq;
+  const vpp = srcIsCh2 ? data.ch2_vpp : data.ch1_vpp;
+  if(freqEl) freqEl.textContent = freq ? (freq > 1000 ? (freq/1000).toFixed(2)+'k' : freq.toFixed(1)) + ' Hz' : '-';
+  if(vppEl) vppEl.textContent = vpp ? vpp.toFixed(2) + ' V' : '-';
 });
+
+function renderMainOscCurve(samples, visibleCount, w, voltToY, color) {
+  mainOscCtx.strokeStyle = color;
+  mainOscCtx.lineWidth = 1.5;
+  mainOscCtx.beginPath();
+  for (let i = 0; i < visibleCount; i++) {
+    const x = (i / (visibleCount - 1)) * w;
+    const y = voltToY(samples[i]);
+    if (i === 0) mainOscCtx.moveTo(x, y); else mainOscCtx.lineTo(x, y);
+  }
+  mainOscCtx.stroke();
+}
 
 function renderMainOsc() {
   if (mainUiMode.value === 'oscilloscope' && lastMainOscData) {
-    const { samples } = lastMainOscData;
+    const { ch1, ch2 } = lastMainOscData;
     const w = mainOscCanvas.width;
     const h = mainOscCanvas.height;
     if (w > 0 && h > 0) {
       mainOscCtx.clearRect(0, 0, w, h);
-      
+
       const vScale = parseFloat(document.getElementById('mainOscVScale').value || 1.0);
       const vPos = parseFloat(document.getElementById('mainOscVPos').value || 0);
       const hScale = parseFloat(document.getElementById('mainOscHScale').value || 1.0);
@@ -374,22 +398,16 @@ function renderMainOsc() {
       // Trigger Level
       const trigV = parseFloat(document.getElementById('mainOscTrigV').value || 1.65);
       const trigY = voltToY(trigV);
-      mainOscCtx.strokeStyle = '#ffff00';
+      mainOscCtx.strokeStyle = '#ff5555';
       mainOscCtx.lineWidth = 1;
+      mainOscCtx.setLineDash([6, 4]);
       mainOscCtx.beginPath(); mainOscCtx.moveTo(0, trigY); mainOscCtx.lineTo(w, trigY); mainOscCtx.stroke();
+      mainOscCtx.setLineDash([]);
 
-      // Waveform
-      mainOscCtx.strokeStyle = '#00f0ff';
-      mainOscCtx.lineWidth = 2;
-      mainOscCtx.beginPath();
-      
-      const visibleCount = Math.floor(samples.length / hScale);
-      for (let i = 0; i < visibleCount; i++) {
-        const x = (i / (visibleCount - 1)) * w;
-        const y = voltToY(samples[i]);
-        if (i === 0) mainOscCtx.moveTo(x, y); else mainOscCtx.lineTo(x, y);
-      }
-      mainOscCtx.stroke();
+      // Waveforms — CH1 (yellow), CH2 (cyan)
+      const visibleCount = Math.floor(Math.min(ch1.length, ch2.length) / hScale);
+      renderMainOscCurve(ch1, visibleCount, w, voltToY, '#FFDD00');
+      renderMainOscCurve(ch2, visibleCount, w, voltToY, '#00FFFF');
     }
   }
   requestAnimationFrame(renderMainOsc);
@@ -402,10 +420,11 @@ updateModeVisibility();
 function syncMainOscSettings() {
   socket.emit('update_osc_settings', {
     trig_v: parseFloat(document.getElementById('mainOscTrigV').value),
+    trig_src: parseInt(document.getElementById('mainOscTrigSrc').value),
     rising: document.getElementById('mainOscEdge').value === 'rising'
   });
 }
-['mainOscTrigV', 'mainOscEdge', 'mainOscVScale', 'mainOscVPos', 'mainOscHScale'].forEach(id => {
+['mainOscTrigV', 'mainOscTrigSrc', 'mainOscEdge', 'mainOscVScale', 'mainOscVPos', 'mainOscHScale'].forEach(id => {
   const el = document.getElementById(id);
   if(el) el.addEventListener('change', syncMainOscSettings);
 });
@@ -478,12 +497,12 @@ powerSupplyBtn.addEventListener('click', async () => {
       powerSupplyState = newState;
       powerSupplyBtn.innerText = `Power Supply ${newState.toUpperCase()}`;
       powerSupplyBtn.style.background = newState === 'on' ? '#ff6b6b' : '#2ecc71';
-      feedbackAdd(`[power] Power supply turned ${newState}`);
+      console.log(`[power] Power supply turned ${newState}`);
     } else {
-      feedbackAdd(`[power] Error turning power ${newState}: ${result.message || 'Unknown error'}`);
+      console.log(`[power] Error turning power ${newState}: ${result.message || 'Unknown error'}`);
     }
   } catch (error) {
-    feedbackAdd(`[power] Request failed: ${error}`);
+    console.log(`[power] Request failed: ${error}`);
   }
 });
 
@@ -561,7 +580,6 @@ socket.on('flashing_status', (d) => {
   if(!d) return;
   const txt = String(d);
   flashStatus.innerText = txt;
-  feedbackAdd('[flash] ' + txt);
   const m = txt.match(/(\d{1,3})%/);
   if(m) progressEl.style.width = m[1] + '%';
   if(/complete|done|success|✅/i.test(txt)){
@@ -576,7 +594,7 @@ factoryResetBtn.addEventListener('click', async () => {
   const confirmReset = confirm(`Factory Reset will flash the default firmware for board: ${board}.\nProceed?`);
   if(!confirmReset) return;
   try {
-    feedbackAdd(`[factory] Requesting factory reset for ${board}...`);
+    console.log(`[factory] Requesting factory reset for ${board}...`);
     const resp = await fetch('/factory_reset', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -584,13 +602,13 @@ factoryResetBtn.addEventListener('click', async () => {
     });
     const j = await resp.json();
     if(resp.ok){
-      feedbackAdd(`[factory] ${j.status || 'Factory reset started'}`);
+      console.log(`[factory] ${j.status || 'Factory reset started'}`);
     } else {
-      feedbackAdd(`[factory] ERROR: ${j.error || JSON.stringify(j)}`);
+      console.log(`[factory] ERROR: ${j.error || JSON.stringify(j)}`);
       alert('Factory reset failed: ' + (j.error || 'unknown'));
     }
   } catch (e) {
-    feedbackAdd(`[factory] Request failed: ${e}`);
+    console.log(`[factory] Request failed: ${e}`);
     alert('Factory reset request failed: ' + e);
   }
 });
@@ -633,7 +651,7 @@ connectBtn.addEventListener('click', () => {
 sendBtn.addEventListener('click', () => {
   const txt = cmdInput.value.trim(); if(!txt) return;
   socket.emit('send_command', { cmd: txt });
-  feedbackAdd('> ' + txt); cmdInput.value = '';
+  cmdInput.value = '';
 });
 
 cmdInput.addEventListener('keydown', (e) => {
@@ -784,6 +802,11 @@ function createControlElement(cfg){
   wrapper.style.border='1px solid #333';
   wrapper.style.padding='8px';
   wrapper.style.borderRadius='8px';
+  if(cfg.locked){
+    wrapper.classList.add('locked-control');
+    wrapper.dataset.requiredId = cfg.requiredId || '';
+    wrapper.style.borderColor = '#00f0ff88';
+  }
 
   const content = document.createElement('div');
   content.style.flex='1';
@@ -793,15 +816,18 @@ function createControlElement(cfg){
   content.style.gap='6px';
 
   const label = document.createElement('div');
-  label.innerText = cfg.label;
+  label.innerText = cfg.label + (cfg.locked ? ' 🔒' : '');
   label.style.fontWeight='700';
   label.style.minWidth='100px';
   content.appendChild(label);
 
-  const removeBtn = document.createElement('button');
-  removeBtn.innerText='❌';
-  removeBtn.style.marginLeft='8px';
-  removeBtn.onclick = () => { wrapper.remove(); saveLayoutToStorage(); };
+  let removeBtn = null;
+  if(!cfg.locked){
+    removeBtn = document.createElement('button');
+    removeBtn.innerText='❌';
+    removeBtn.style.marginLeft='8px';
+    removeBtn.onclick = () => { wrapper.remove(); saveLayoutToStorage(); };
+  }
 
   /* ============ SLIDER CONTROL ============ */
   if(cfg.type === 'slider'){
@@ -820,7 +846,6 @@ function createControlElement(cfg){
     valSpan.style.minWidth='30px';
 
     let sliderTimeout = null;
-    let fixedVar = cfg.dataKey || 'var'; // use saved dataKey
 
     slider.oninput = () => {
       valSpan.innerText = slider.value;
@@ -828,7 +853,6 @@ function createControlElement(cfg){
       if (sliderTimeout) clearTimeout(sliderTimeout);
       sliderTimeout = setTimeout(() => {
         socket.emit('send_command', { cmd });
-        feedbackAdd(`(slider ${fixedVar}) sent value: ${cmd}`);
       }, 120);
     };
 
@@ -839,9 +863,9 @@ function createControlElement(cfg){
 
  /* ============ TOGGLE BUTTON CONTROL (send only your custom commands) ============ */
 else if(cfg.type === 'button'){
-  const onCmd = prompt('Enter command for ON state (send only value or full string):', '1') || '';
-  const offCmd = prompt('Enter command for OFF state:', '0') || '';
-  
+  const onCmd = cfg.onCmd !== undefined ? cfg.onCmd : (prompt('Enter command for ON state (send only value or full string):', '1') || '');
+  const offCmd = cfg.offCmd !== undefined ? cfg.offCmd : (prompt('Enter command for OFF state:', '0') || '');
+
   const btn = document.createElement('button');
   btn.className = 'primary';
   btn.innerText = cfg.label || 'TOGGLE';
@@ -853,7 +877,6 @@ else if(cfg.type === 'button'){
     btn.style.opacity = toggled ? '0.7' : '1';
     const cmd = toggled ? onCmd : offCmd;
     socket.emit('send_command', { cmd });  // ✅ sends only what you typed, e.g. "1" or "0"
-    feedbackAdd(`(button ${cfg.label}) sent: ${cmd}`);
   };
   content.appendChild(btn);
 }
@@ -874,30 +897,59 @@ else if(cfg.type === 'button'){
   }
 
   wrapper.appendChild(content);
-  wrapper.appendChild(removeBtn);
+  if(removeBtn) wrapper.appendChild(removeBtn);
   dynamicControls.appendChild(wrapper);
 }
 
-/* Add slider — uses varDropdown items (varDropdown is managed below) */
+/* Admin-required controls: always present, not removable/editable by students.
+   Diffed by data-required-id so it's safe to call on every ui_config update. */
+function renderRequiredControls(list) {
+  if (!dynamicControls) return;
+  const incomingIds = new Set((list || []).map(c => c.id));
+  dynamicControls.querySelectorAll('.locked-control').forEach(row => {
+    if (!incomingIds.has(row.dataset.requiredId)) row.remove();
+  });
+  const existingIds = new Set(Array.from(dynamicControls.querySelectorAll('.locked-control')).map(row => row.dataset.requiredId));
+  (list || []).forEach(cfg => {
+    if (!existingIds.has(cfg.id)) {
+      createControlElement(Object.assign({}, cfg, { locked: true, requiredId: cfg.id }));
+    }
+  });
+}
+
+/* Add slider — created directly, no variable dropdown */
 addSliderBtn.addEventListener('click', () => {
-  // show varDropdown with mode slider
-  showVarDropdown('slider');
+  const label = prompt('Enter label for slider:', 'SLIDER') || 'SLIDER';
+  const minVal = parseInt(prompt(`Enter MIN value for ${label}:`, '0'));
+  const maxVal = parseInt(prompt(`Enter MAX value for ${label}:`, '1023'));
+  createControlElement({
+    type: 'slider',
+    label: label.toUpperCase(),
+    dataKey: label.toLowerCase().replace(/\s+/g, '_'),
+    min: isNaN(minVal) ? 0 : minVal,
+    max: isNaN(maxVal) ? 1023 : maxVal,
+    cmdTemplate: `{key}:{value}`
+  });
+  saveLayoutToStorage();
 });
 
-/* Add button */
+/* Add button — created directly, no variable dropdown */
 addButtonBtn.addEventListener('click', () => {
-  showVarDropdown('button');
+  const label = prompt('Button label (display):', 'TOGGLE_BUTTON') || 'TOGGLE_BUTTON';
+  createControlElement({ type: 'button', label });
+  saveLayoutToStorage();
 });
 
-/* Add readout */
-addReadoutBtn.addEventListener('click', () => {
+/* Add readout — only this one shows the variable dropdown */
+addReadoutBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
   showVarDropdown('readout');
 });
 
 // Auto-save layout to localStorage on every change
 function saveLayoutToStorage() {
   if (!sessionKey) return;
-  const rows = document.querySelectorAll('#dynamicControls .control-row');
+  const rows = document.querySelectorAll('#dynamicControls .control-row:not(.locked-control)');
   const arr = [];
   const seen = new Set(); // Track unique controls
   
@@ -940,29 +992,33 @@ function saveLayoutToStorage() {
 
 let layoutLoadedThisPage = false;
 
+// Removes only student-added rows, preserving admin-required (locked) controls
+function clearUserControls() {
+  if (!dynamicControls) return;
+  dynamicControls.querySelectorAll('.control-row:not(.locked-control)').forEach(row => row.remove());
+}
+
 // Auto-load layout when sensor data becomes available (after serial connects)
 function loadLayoutWhenReady() {
   // Prevent loading multiple times in same page
   if (layoutLoadedThisPage) return;
   layoutLoadedThisPage = true;
-  
+
   if (!sessionKey) return;
-  
+
   // Always clear old controls before loading
-  if (dynamicControls) {
-    dynamicControls.innerHTML = '';
-  }
-  
+  clearUserControls();
+
   const raw = localStorage.getItem('evl_layout_' + sessionKey);
   if(raw) {
     try {
       const arr = JSON.parse(raw);
       if(arr && arr.length > 0) {
         console.log('[layout] Loading', arr.length, 'controls:', JSON.stringify(arr));
-        
+
         // Clear any existing controls first
-        dynamicControls.innerHTML = '';
-        
+        clearUserControls();
+
         arr.forEach(cfg => {
           createControlElement(cfg);
         });
@@ -1133,7 +1189,7 @@ socket.on('sensor_data', (payload) => {
 
   // If dropdown is open, refresh it with new keys
   if(varDropdown.style.display === 'block'){
-    showVarDropdown(varDropdownMode);
+    showVarDropdown();
   }
 
   // Update dropdown options
@@ -1265,10 +1321,8 @@ function autoCreateSlidersFromSensors(payloadKeys){
   });
 }
 
-/* ----------------- varDropdown show/hide and mode handling ----------------- */
-let varDropdownMode = 'slider'; // slider/button/readout
+/* ----------------- varDropdown show/hide (readout variable picker only) ----------------- */
 function showVarDropdown(mode){
-  varDropdownMode = mode || 'slider';
   // rebuild dropdown items from CURRENT sensor keys
   varDropdown.innerHTML = '';
   const currentKeys = Array.from(yAxisFilter1.options).map(o => o.value).filter(v => v);
@@ -1281,18 +1335,8 @@ function showVarDropdown(mode){
       item.className = 'item';
       item.innerText = k;
       item.onclick = () => {
-        if(varDropdownMode === 'slider'){
-          const minVal = parseInt(prompt(`Enter MIN value for ${k}:`, '0'));
-          const maxVal = parseInt(prompt(`Enter MAX value for ${k}:`, '1023'));
-          createControlElement({ type:'slider', label: k.toUpperCase(), dataKey: k, min: isNaN(minVal)?0:minVal, max: isNaN(maxVal)?1023:maxVal, cmdTemplate:`{key}:{value}` });
-        } else if(varDropdownMode === 'button'){
-          const label = prompt('Button label (display):', `TOGGLE_BUTTON`) || `TOGGLE_BUTTON`;
-
-          createControlElement({ type:'button', label, dataKey: k, cmdOn: `${k}:1`, cmdOff: `${k}:0` });
-        } else if(varDropdownMode === 'readout'){
-          const label = prompt('Readout label (display):', k) || k;
-          createControlElement({ type:'readout', label, dataKey: k, unit: '', decimals: 1 });
-        }
+        const label = prompt('Readout label (display):', k) || k;
+        createControlElement({ type:'readout', label, dataKey: k, unit: '', decimals: 1 });
         saveLayoutToStorage();
         hideVarDropdown();
       };
@@ -1303,13 +1347,10 @@ function showVarDropdown(mode){
 }
 function hideVarDropdown(){ varDropdown.style.display = 'none'; }
 document.addEventListener('click', (e) => {
-  if(!e.target.closest('#addSlider') && !e.target.closest('#varDropdown') && !e.target.closest('#addButton') && !e.target.closest('#addReadout')) {
+  if(!e.target.closest('#addReadout') && !e.target.closest('#varDropdown')) {
     hideVarDropdown();
   }
 });
-document.getElementById('addSlider').addEventListener('click', (e) => { e.stopPropagation(); showVarDropdown('slider'); });
-document.getElementById('addButton').addEventListener('click', (e) => { e.stopPropagation(); showVarDropdown('button'); });
-document.getElementById('addReadout').addEventListener('click', (e) => { e.stopPropagation(); showVarDropdown('readout'); });
 
 /* ----------------- fallback: parse feedback into sensor_data when server doesn't emit sensor_data */
 socket.on('feedback', (line) => {
@@ -1344,9 +1385,9 @@ exportCSVBtn.addEventListener('click', () => {
 
 
 /* ----------------- Socket / connection logging ----------------- */
-socket.on('connect', () => { socketConnected = true; feedbackAdd('Socket connected'); requestPorts(); });
-socket.on('disconnect', (reason) => { socketConnected = false; feedbackAdd('Socket disconnected: ' + (reason||'unknown')); });
-socket.on('connect_error', (err) => { feedbackAdd('Socket connect error: ' + String(err)); });
+socket.on('connect', () => { socketConnected = true; console.log('Socket connected'); requestPorts(); });
+socket.on('disconnect', (reason) => { socketConnected = false; console.log('Socket disconnected: ' + (reason||'unknown')); });
+socket.on('connect_error', (err) => { console.log('Socket connect error: ' + String(err)); });
 
 /* ----------------- Real-time board type update from Admin Pi ----------------- */
 socket.on('board_type_updated', (data) => {
@@ -1354,7 +1395,7 @@ socket.on('board_type_updated', (data) => {
     const boardTypeSelect = document.getElementById('boardType');
     if (boardTypeSelect) {
       boardTypeSelect.value = data.board_type;
-      feedbackAdd('[board] Board type updated to: ' + data.board_type);
+      console.log('[board] Board type updated to: ' + data.board_type);
     }
   }
 });
@@ -1370,10 +1411,57 @@ socket.on('board_type_updated', (data) => {
   }
 })();
 
+/* ----------------- Admin-configured UI controls ----------------- */
+function applyUiConfig(cfg) {
+  if (!cfg) return;
+  const controls = cfg.controls || {};
+  const setDisabled = (el, disabled) => {
+    if (!el) return;
+    el.disabled = !!disabled;
+    el.classList.toggle('admin-disabled', !!disabled);
+    el.title = disabled ? 'Disabled by lab administrator' : '';
+  };
+  setDisabled(document.getElementById('boardType'), !controls.board_select);
+  setDisabled(document.getElementById('flashBtn'), !controls.flash_firmware);
+  setDisabled(document.getElementById('firmwareInput'), !controls.flash_firmware);
+  setDisabled(document.getElementById('connectBtn'), !controls.serial_connect);
+  setDisabled(document.getElementById('factoryResetBtn'), !controls.factory_reset);
+  setDisabled(document.getElementById('powerSupplyBtn'), !controls.power_supply);
+
+  const serialMonitorCard = document.getElementById('serialMonitorCard');
+  if (serialMonitorCard) serialMonitorCard.style.display = controls.serial_monitor_section ? '' : 'none';
+
+  const chartCard = document.getElementById('chartCard');
+  if (chartCard) chartCard.style.display = (controls.serial_plotter || controls.oscilloscope) ? '' : 'none';
+
+  const modeSelect = document.getElementById('mainUiMode');
+  if (modeSelect) {
+    const plotterOpt = modeSelect.querySelector('option[value="plotter"]');
+    const oscOpt = modeSelect.querySelector('option[value="oscilloscope"]');
+    if (plotterOpt) plotterOpt.disabled = !controls.serial_plotter;
+    if (oscOpt) oscOpt.disabled = !controls.oscilloscope;
+    if (!controls.serial_plotter && modeSelect.value === 'plotter' && controls.oscilloscope) {
+      modeSelect.value = 'oscilloscope';
+      updateModeVisibility();
+    } else if (!controls.oscilloscope && modeSelect.value === 'oscilloscope' && controls.serial_plotter) {
+      modeSelect.value = 'plotter';
+      updateModeVisibility();
+    }
+  }
+
+  const dcCard = document.getElementById('dynamicControlsCard');
+  if (dcCard && cfg.defaults) dcCard.style.display = cfg.defaults.dynamic_controls_visible ? '' : 'none';
+
+  renderRequiredControls(cfg.required_controls || []);
+}
+
+applyUiConfig(uiConfigFromServer);
+socket.on('ui_config_updated', applyUiConfig);
+
 /* ----------------- Expand chart (open in new tab) ----------------- */
 document.getElementById('expandChartBtn').addEventListener('click', () => {
   if (!sessionKey) {
-    feedbackAdd('No active session - please start a session first');
+    alert('No active session - please start a session first');
     return;
   }
   const mode = document.getElementById('mainUiMode').value;
@@ -1385,18 +1473,18 @@ document.getElementById('expandChartBtn').addEventListener('click', () => {
   }
   const win = window.open(url, '_blank');
   if (win) openedWindows.push(win);
-  if (!win) feedbackAdd('Popup blocked - please allow popups');
+  if (!win) alert('Popup blocked - please allow popups');
 });
 
 /* ----------------- Expand video (open in new tab) ----------------- */
 document.getElementById('expandVideoBtn').addEventListener('click', () => {
   if (!sessionKey) {
-    feedbackAdd('No active session - please start a session first');
+    alert('No active session - please start a session first');
     return;
   }
   const win = window.open('/camera?key=' + sessionKey, '_blank');
   if (win) openedWindows.push(win);
-  if (!win) feedbackAdd('Popup blocked - please allow popups');
+  if (!win) alert('Popup blocked - please allow popups');
 });
 
 /* ----------------- Pause chart ----------------- */
@@ -1737,7 +1825,7 @@ if (!sessionKey) {
         // Disconnect serial port if connected
         try {
           socket.emit('disconnect_serial');
-          feedbackAdd('[session] Session ended - serial disconnected');
+          console.log('[session] Session ended - serial disconnected');
         } catch(e) { console.log('Serial disconnect error:', e); }
 
         // Update button to show redirect message

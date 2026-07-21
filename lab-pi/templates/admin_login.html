@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Admin Login - Lab Pi</title>
+<style>
+html,body{height:100%;margin:0;font-family:'Inter',sans-serif;background:#1c1c2b;color:#e0e0e0;display:flex;align-items:center;justify-content:center}
+.card{background:#252538;padding:28px;border-radius:10px;border:1px solid #3d3d52;box-shadow:0 0 10px rgba(0,0,0,0.4);width:320px}
+.card h1{color:#00f0ff;margin:0 0 6px 0;font-size:18px}
+.card p.sub{color:#9aaab4;font-size:13px;margin:0 0 18px 0}
+label{display:block;margin-bottom:6px;font-size:13px;color:#9aaab4}
+input{width:100%;box-sizing:border-box;padding:8px;border-radius:6px;border:none;background:#3d3d52;color:#00f0ff;margin-bottom:14px}
+button{width:100%;padding:10px;border-radius:6px;border:none;cursor:pointer;background:#00f0ff;color:#041726;font-weight:700}
+.error{background:#ff6b6b22;border:1px solid #ff6b6b;color:#ff6b6b;padding:8px 10px;border-radius:6px;font-size:13px;margin-bottom:14px}
+</style>
+</head>
+<body>
+<div class="card">
+  {% if setup_mode %}
+    <h1>Set Admin Password</h1>
+    <p class="sub">No admin password is configured yet for this Lab Pi. Choose one now.</p>
+  {% else %}
+    <h1>Admin Login</h1>
+    <p class="sub">Lab Pi UI control settings</p>
+  {% endif %}
+
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+  <form method="post" action="{{ url_for('admin_login', next=request.args.get('next')) }}">
+    {% if setup_mode %}
+      <label for="password">New password (min 8 characters)</label>
+      <input type="password" id="password" name="password" minlength="8" required autofocus>
+      <label for="password_confirm">Confirm password</label>
+      <input type="password" id="password_confirm" name="password_confirm" minlength="8" required>
+      <button type="submit">Set Password &amp; Continue</button>
+    {% else %}
+      <label for="password">Password</label>
+      <input type="password" id="password" name="password" required autofocus>
+      <button type="submit">Log In</button>
+    {% endif %}
+  </form>
+</div>
+</body>
+</html>

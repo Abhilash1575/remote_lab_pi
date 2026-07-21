@@ -43,7 +43,7 @@ import os, time, subprocess, threading, queue, tempfile, re, random, json, math,
 import numpy as np
 from scipy.signal import medfilt, savgol_filter
 import requests
-from flask import Flask, send_from_directory, request, jsonify, render_template, abort
+from flask import Flask, send_from_directory, request, jsonify, render_template, abort, session, redirect, url_for
 from flask_socketio import SocketIO, emit
 
 # Optional: serial usage guarded (so app still runs if pyserial not available)
@@ -60,12 +60,15 @@ import struct
 OSC_PORT = None
 OSC_BAUD = 921600
 OSC_SAMPLE_RATE = 40000
-OSC_HISTORY_SIZE = OSC_SAMPLE_RATE * 5  # 5 seconds
-osc_history = np.zeros(OSC_HISTORY_SIZE, dtype=np.float64)
+OSC_HISTORY_SIZE = OSC_SAMPLE_RATE * 10  # 10 seconds, matches STM32 dual-channel scope
+OSC_EXPECTED_COUNT = 256  # samples per packet (HALF_BUF_LEN in firmware) - exact match required
+osc_history_ch1 = np.zeros(OSC_HISTORY_SIZE, dtype=np.float64)
+osc_history_ch2 = np.zeros(OSC_HISTORY_SIZE, dtype=np.float64)
 osc_hist_idx = 0
 osc_lock = threading.Lock()
 osc_ser = None
 osc_stop = threading.Event()
+osc_stats_counters = {"packets_ok": 0, "packets_rejected": 0}
 
 osc_settings = {
     'trig_v': 1.65,
@@ -74,26 +77,33 @@ osc_settings = {
     'samples': 1000,
     'smooth': False,
     'freeze': False,
-    'pre_trigger': 200
+    'pre_trigger': 200,
+    'trig_src': 0  # 0 = CH1, 1 = CH2
 }
 
 def detect_osc_port():
-    """Detect ESP32 port by looking for high baud rate capability or specific VID/PIDs"""
+    """Detect the scope board's USB VID/PID: STM32 CDC ACM (0483:5740), with
+    legacy ESP32/Arduino USB-serial bridges (CP210x, CH340) kept as fallback."""
     global OSC_PORT
     if list_ports is None: return None
     ports = list_ports.comports()
     for p in ports:
-        # Common ESP32/Arduino USB-Serial VID:PIDs
-        # CP210x: 10c4:ea60, CH340: 1a86:7523
-        if any(vid_pid in (p.vid, p.pid) for vid_pid in [0x10c4, 0xea60, 0x1a86, 0x7523]):
+        if any(vid_pid in (p.vid, p.pid) for vid_pid in [0x0483, 0x5740, 0x10c4, 0xea60, 0x1a86, 0x7523]):
              OSC_PORT = p.device
-             print(f"[OSC] Auto-detected ESP32 at {OSC_PORT}")
+             print(f"[OSC] Auto-detected scope board at {OSC_PORT}")
              return OSC_PORT
     return None
 
 detect_osc_port()
 
 from werkzeug.utils import secure_filename
+
+from admin_config import (
+    CONTROL_KEYS, get_effective_ui_config, load_ui_config, save_ui_config,
+    is_control_enabled, has_admin_password_configured, password_locked_by_env,
+    set_admin_password, verify_admin_password, admin_required,
+    add_required_control, delete_required_control,
+)
 
 # ---------- CONFIG ----------
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))  # base path relative to script location
@@ -115,7 +125,6 @@ latest_sensor_data = {}  # Store latest sensor data for CRO page polling
 serial_lock = threading.Lock()
 ser = None
 ser_stop = threading.Event()
-data_generator_thread = None  # global mock generator
 
 # ---------- MASTER PI HEARTBEAT CONFIGURATION ----------
 # Load from environment variables
@@ -539,13 +548,17 @@ def list_serial_ports():
     if list_ports is None:
         return []
     all_ports = list_ports.comports()
-    # Filter out the Oscilloscope port
-    return [p.device for p in all_ports if p.device != OSC_PORT]
+    # Only show USB serial adapters (student boards); hide onboard UARTs like /dev/ttyAMA*
+    # and exclude the Oscilloscope port
+    return [
+        p.device for p in all_ports
+        if p.device != OSC_PORT and re.match(r'^/dev/tty(USB|ACM)\d+$', p.device)
+    ]
 
 @app.route('/')
 def index():
     # Provide default values for session variables
-    return render_template('index.html', session_duration=0, session_end_time=0, board_type='arduino')
+    return render_template('index.html', session_duration=0, session_end_time=0, board_type='arduino', ui_config=get_effective_ui_config())
 
 @app.route('/experiment')
 def experiment():
@@ -613,7 +626,7 @@ def experiment():
     duration = active_sessions[session_key]['duration']
     session_end_time = int(active_sessions[session_key]['expires_at'] * 1000)  # JS milliseconds
     board_type = active_sessions[session_key].get('board_type', 'arduino')
-    return render_template('index.html', session_duration=duration, session_end_time=session_end_time, board_type=board_type)
+    return render_template('index.html', session_duration=duration, session_end_time=session_end_time, board_type=board_type, ui_config=get_effective_ui_config())
 
 @app.route('/add_session', methods=['POST'])
 def add_session():
@@ -751,6 +764,121 @@ current_board_type = 'arduino'
 current_experiment_id = None
 current_sop_file = None
 
+# ---------- ADMIN AUTH & UI CONFIG ----------
+@app.route('/admin/login', methods=['GET', 'POST'])
+def admin_login():
+    setup_mode = not has_admin_password_configured()
+    error = None
+    if request.method == 'POST':
+        if setup_mode:
+            password = request.form.get('password', '')
+            password_confirm = request.form.get('password_confirm', '')
+            if len(password) < 8:
+                error = 'Password must be at least 8 characters.'
+            elif password != password_confirm:
+                error = 'Passwords do not match.'
+            else:
+                set_admin_password(password)
+                session['is_admin'] = True
+                return redirect(url_for('admin_settings'))
+        else:
+            password = request.form.get('password', '')
+            if verify_admin_password(password):
+                session['is_admin'] = True
+                next_path = request.args.get('next') or url_for('admin_settings')
+                return redirect(next_path)
+            error = 'Incorrect password.'
+    return render_template('admin_login.html', setup_mode=setup_mode, error=error)
+
+@app.route('/admin/logout')
+def admin_logout():
+    session.pop('is_admin', None)
+    return redirect(url_for('admin_login'))
+
+@app.route('/admin/settings', methods=['GET', 'POST'])
+@admin_required
+def admin_settings():
+    saved = False
+    if request.method == 'POST':
+        new_controls = {key: (request.form.get(f'control_{key}') == 'on') for key, _ in CONTROL_KEYS}
+        main_view = request.form.get('main_view')
+        if main_view not in ('plotter', 'oscilloscope'):
+            main_view = 'plotter'
+        new_defaults = {
+            'main_view': main_view,
+            'dynamic_controls_visible': request.form.get('dynamic_controls_visible') == 'on',
+        }
+        cfg = save_ui_config(new_controls, new_defaults)
+        socketio.emit('ui_config_updated', get_effective_ui_config())
+        saved = True
+
+    cfg = get_effective_ui_config()
+    return render_template(
+        'admin_settings.html', cfg=cfg, control_keys=CONTROL_KEYS,
+        env_password_locked=password_locked_by_env(), saved=saved, password_error=None,
+    )
+
+@app.route('/admin/settings/password', methods=['POST'])
+@admin_required
+def admin_change_password():
+    if password_locked_by_env():
+        return redirect(url_for('admin_settings'))
+    current_password = request.form.get('current_password', '')
+    new_password = request.form.get('new_password', '')
+    new_password_confirm = request.form.get('new_password_confirm', '')
+    if not verify_admin_password(current_password):
+        error = 'Current password is incorrect.'
+    elif len(new_password) < 8:
+        error = 'New password must be at least 8 characters.'
+    elif new_password != new_password_confirm:
+        error = 'New passwords do not match.'
+    else:
+        set_admin_password(new_password)
+        return redirect(url_for('admin_settings'))
+
+    cfg = get_effective_ui_config()
+    return render_template(
+        'admin_settings.html', cfg=cfg, control_keys=CONTROL_KEYS,
+        env_password_locked=password_locked_by_env(), saved=False, password_error=error,
+    )
+
+@app.route('/admin/settings/controls/add', methods=['POST'])
+@admin_required
+def admin_add_required_control():
+    rc_type = request.form.get('rc_type', '')
+    label = (request.form.get('rc_label') or '').strip()
+    if rc_type in ('slider', 'button', 'readout') and label:
+        control = {'type': rc_type, 'label': label}
+        if rc_type == 'slider':
+            try:
+                control['min'] = int(request.form.get('rc_min', 0))
+            except (TypeError, ValueError):
+                control['min'] = 0
+            try:
+                control['max'] = int(request.form.get('rc_max', 1023))
+            except (TypeError, ValueError):
+                control['max'] = 1023
+            control['dataKey'] = label.lower().replace(' ', '_')
+        elif rc_type == 'button':
+            control['onCmd'] = request.form.get('rc_on_cmd', '1')
+            control['offCmd'] = request.form.get('rc_off_cmd', '0')
+        elif rc_type == 'readout':
+            control['dataKey'] = (request.form.get('rc_data_key') or label.lower().replace(' ', '_')).strip()
+            control['unit'] = request.form.get('rc_unit', '')
+            control['decimals'] = request.form.get('rc_decimals', '')
+        add_required_control(control)
+        socketio.emit('ui_config_updated', get_effective_ui_config())
+    return redirect(url_for('admin_settings'))
+
+@app.route('/admin/settings/controls/delete', methods=['POST'])
+@admin_required
+def admin_delete_required_control():
+    control_id = request.form.get('control_id', '')
+    if control_id:
+        delete_required_control(control_id)
+        socketio.emit('ui_config_updated', get_effective_ui_config())
+    return redirect(url_for('admin_settings'))
+
 @app.route('/test_gpio', methods=['GET'])
 def test_gpio():
     """Test GPIO initialization and return debug info"""
@@ -878,7 +1006,7 @@ def camera():
 
 @app.route('/homepage')
 def homepage():
-    return render_template('index.html')
+    return render_template('index.html', ui_config=get_effective_ui_config())
 
 @app.route('/ports')
 def ports_rest():
@@ -887,7 +1015,11 @@ def ports_rest():
 # ---------- FLASH ----------
 @app.route('/flash', methods=['POST'])
 def flash():
+    if not is_control_enabled('flash_firmware'):
+        return jsonify({'status': 'error', 'message': 'Flash Firmware is disabled for this session'}), 403
     board = request.form.get('board', 'generic')
+    if not is_control_enabled('board_select'):
+        board = current_board_type or board
     port = request.form.get('port', '') or ''
     available_ports = list_serial_ports()
     default_port = available_ports[0] if available_ports else '/dev/ttyUSB0'
@@ -940,11 +1072,15 @@ def run_flash_command(cmd, filename=None):
 # Finds corresponding default firmware file under DEFAULT_FW_DIR and calls run_flash_command
 @app.route('/factory_reset', methods=['POST'])
 def factory_reset():
+    if not is_control_enabled('factory_reset'):
+        return jsonify({'error': 'Factory Reset is disabled for this session'}), 403
     try:
         data = request.get_json(force=True)
     except:
         data = request.form.to_dict()
     board = (data.get('board') or 'generic').lower()
+    if not is_control_enabled('board_select'):
+        board = (current_board_type or board).lower()
 
     # mapping from board -> default filename in DEFAULT_FW_DIR
     default_map = {
@@ -1027,6 +1163,11 @@ def clean_osc_data(data):
     except:
         return data
 
+def osc_checksum16(data: bytes) -> int:
+    # Must match the firmware's checksum16(): plain 16-bit additive sum,
+    # wrapping the same way a uint16_t does on the MCU.
+    return sum(data) & 0xFFFF
+
 def find_osc_trigger(data, level, hysteresis, rising=True):
     pre_trigger = osc_settings['pre_trigger']
     if len(data) < pre_trigger + 10: return None
@@ -1040,14 +1181,14 @@ def find_osc_trigger(data, level, hysteresis, rising=True):
             if armed and data[i - 1] > level >= data[i]: return i
     return None
 
-def get_latest_osc(n):
-    global osc_history, osc_hist_idx
+def get_latest_osc(history_arr, n):
+    global osc_hist_idx
     n = min(n, OSC_HISTORY_SIZE)
     with osc_lock:
         start = (osc_hist_idx - n) % OSC_HISTORY_SIZE
         if start < osc_hist_idx:
-            return osc_history[start:osc_hist_idx].copy()
-        return np.concatenate([osc_history[start:], osc_history[:osc_hist_idx]])
+            return history_arr[start:osc_hist_idx].copy()
+        return np.concatenate([history_arr[start:], history_arr[:osc_hist_idx]])
 
 def measure_osc_frequency(data):
     if len(data) < 64: return None
@@ -1064,66 +1205,91 @@ def measure_osc_frequency(data):
         return None
 
 def osc_worker():
-    global osc_history, osc_hist_idx, osc_ser, OSC_PORT
+    global osc_history_ch1, osc_history_ch2, osc_hist_idx, osc_ser, OSC_PORT
     print(f"[OSC] Worker started. Port: {OSC_PORT}")
-    
+
     raw = bytearray()
     VREF = 3.3
     last_emit_time = 0
-    
+
     while not osc_stop.is_set():
         if OSC_PORT is None:
             detect_osc_port()
             eventlet.sleep(1)
             continue
-            
+
         try:
             if osc_ser is None or not osc_ser.is_open:
                 osc_ser = serial.Serial(OSC_PORT, OSC_BAUD, timeout=0.01)
                 print(f"[OSC] Connected to {OSC_PORT}")
-            
+
             # --- 1. DRAIN SERIAL (High Speed) ---
             # Wait for at least 1KB or 10ms to reduce overhead
             if osc_ser.in_waiting < 1024:
                 eventlet.sleep(0.01)
-                
+
             avail = osc_ser.in_waiting
             if avail > 0:
                 chunk = osc_ser.read(avail)
                 raw += chunk
-                
-                # Fast Packet Parsing
+
+                # Packet format: header(0xAA 0x55) + count(u16) + count*2 data
+                # bytes (interleaved CH1,CH2,CH1,CH2...) + 2-byte checksum trailer.
                 while True:
                     idx = raw.find(b'\xAA\x55')
                     if idx == -1:
-                        if len(raw) > 2: raw = raw[-2:]
+                        if len(raw) > 1: raw = raw[-1:]
                         break
-                    
+
                     if idx > 0: raw = raw[idx:]
                     if len(raw) < 4: break
-                    
+
                     count = struct.unpack_from('<H', raw, 2)[0]
-                    if count == 0 or count > 1024:
+                    # Reject anything that isn't exactly the packet size the
+                    # firmware sends. A loose 0<count<=1024 check let
+                    # misaligned/corrupted "packets" through to the plot.
+                    if count != OSC_EXPECTED_COUNT:
+                        osc_stats_counters["packets_rejected"] += 1
+                        raw = raw[2:]          # drop just the false header, keep searching
+                        continue
+
+                    pkt_len = 4 + count * 2 + 2  # +2 for the trailing checksum
+                    if len(raw) < pkt_len: break
+
+                    payload = bytes(raw[4:4 + count * 2])
+                    expected_chk = struct.unpack_from('<H', raw, 4 + count * 2)[0]
+                    actual_chk = osc_checksum16(payload)
+
+                    if actual_chk != expected_chk:
+                        # Corrupted/misaligned packet - this used to produce
+                        # impossible voltage spikes. Discard instead of plotting it.
+                        osc_stats_counters["packets_rejected"] += 1
                         raw = raw[2:]
                         continue
-                    
-                    pkt_len = 4 + count * 2
-                    if len(raw) < pkt_len: break
-                    
-                    # Fast parse
-                    samples = np.frombuffer(raw, dtype='<u2', count=count, offset=4)
+
+                    samples = np.frombuffer(payload, dtype='<u2')
                     raw = raw[pkt_len:]
-                    
+                    osc_stats_counters["packets_ok"] += 1
+
                     volts = samples.astype(np.float64) * (VREF / 4095.0)
-                    n = len(volts)
+                    # Split the interleaved data (CH1, CH2, CH1, CH2...)
+                    v1 = volts[0::2]
+                    v2 = volts[1::2]
+                    n = len(v1)
+                    if n == 0:
+                        continue
+
                     with osc_lock:
                         end = osc_hist_idx + n
                         if end <= OSC_HISTORY_SIZE:
-                            osc_history[osc_hist_idx:end] = volts
+                            osc_history_ch1[osc_hist_idx:end] = v1
+                            osc_history_ch2[osc_hist_idx:end] = v2
                         else:
                             split = OSC_HISTORY_SIZE - osc_hist_idx
-                            osc_history[osc_hist_idx:] = volts[:split]
-                            osc_history[:n - split] = volts[split:]
+                            osc_history_ch1[osc_hist_idx:]  = v1[:split]
+                            osc_history_ch1[:n - split] = v1[split:]
+                            osc_history_ch2[osc_hist_idx:]  = v2[:split]
+                            osc_history_ch2[:n - split] = v2[split:]
                         osc_hist_idx = end % OSC_HISTORY_SIZE
 
             # --- 2. EMIT (Throttled Snapshot @ 10 FPS) ---
@@ -1133,49 +1299,57 @@ def osc_worker():
                 if not osc_settings['freeze']:
                     disp_n = osc_settings['samples']
                     pad = 16
-                    search_n = disp_n + osc_settings['pre_trigger'] + 1024 + pad
-                    data = get_latest_osc(min(search_n, OSC_HISTORY_SIZE))
-                    
-                    if len(data) >= disp_n:
-                        trig_idx = find_osc_trigger(data, osc_settings['trig_v'], osc_settings['hyst'], osc_settings['rising'])
-                        
+                    search_n = min(disp_n + osc_settings['pre_trigger'] + 1024 + pad, OSC_HISTORY_SIZE)
+                    d1 = get_latest_osc(osc_history_ch1, search_n)
+                    d2 = get_latest_osc(osc_history_ch2, search_n)
+
+                    if len(d1) >= disp_n:
+                        trig_data = d1 if osc_settings.get('trig_src', 0) == 0 else d2
+                        trig_idx = find_osc_trigger(trig_data, osc_settings['trig_v'], osc_settings['hyst'], osc_settings['rising'])
+
                         if trig_idx is not None and (trig_idx - osc_settings['pre_trigger']) >= pad:
                             start = trig_idx - osc_settings['pre_trigger']
                             slice_start = start - pad
                             slice_end = start + disp_n + pad
-                            
-                            if slice_end <= len(data):
-                                display_raw = data[slice_start : slice_end].copy()
+
+                            if slice_end <= len(d1):
+                                raw1 = d1[slice_start:slice_end].copy()
+                                raw2 = d2[slice_start:slice_end].copy()
                                 if osc_settings['smooth']:
-                                    display_clean = clean_osc_data(display_raw)
-                                else:
-                                    display_clean = display_raw
-                                display = display_clean[pad : pad + disp_n]
+                                    raw1 = clean_osc_data(raw1)
+                                    raw2 = clean_osc_data(raw2)
+                                display1 = raw1[pad:pad + disp_n]
+                                display2 = raw2[pad:pad + disp_n]
                                 triggered = True
                             else:
-                                display = data[-disp_n:].copy()
+                                display1 = d1[-disp_n:].copy()
+                                display2 = d2[-disp_n:].copy()
                                 triggered = False
                         else:
-                            display = data[-disp_n:].copy()
+                            display1 = d1[-disp_n:].copy()
+                            display2 = d2[-disp_n:].copy()
                             triggered = False
-                        
-                        vmin = float(np.min(display))
-                        vmax = float(np.max(display))
-                        vpp = vmax - vmin
-                        freq = measure_osc_frequency(display)
-                        
-                        socketio.emit('osc_data', {
-                            'samples': display.tolist(),
+
+                        payload = {
+                            'ch1': display1.tolist(),
+                            'ch2': display2.tolist(),
                             'triggered': triggered,
-                            'vmin': vmin,
-                            'vmax': vmax,
-                            'vpp': vpp,
-                            'freq': freq,
-                            'ts': time.time()
-                        })
-            
+                            'ts': time.time(),
+                        }
+                        for display, prefix in [(display1, 'ch1_'), (display2, 'ch2_')]:
+                            if len(display) == 0: continue
+                            vmin = float(np.min(display))
+                            vmax = float(np.max(display))
+                            payload[prefix + 'vmin'] = vmin
+                            payload[prefix + 'vmax'] = vmax
+                            payload[prefix + 'vpp'] = vmax - vmin
+                            payload[prefix + 'freq'] = measure_osc_frequency(display)
+                            payload[prefix + 'dc'] = float(np.mean(display))
+
+                        socketio.emit('osc_data', payload)
+
             eventlet.sleep(0.001)
-            
+
         except Exception as e:
             print(f"[OSC] Error: {e}")
             if osc_ser:
@@ -1193,36 +1367,13 @@ def handle_update_osc_settings(data):
 
 @socketio.on('osc_auto_level')
 def handle_osc_auto_level():
-    data = get_latest_osc(osc_settings['samples'])
+    history = osc_history_ch1 if osc_settings.get('trig_src', 0) == 0 else osc_history_ch2
+    data = get_latest_osc(history, osc_settings['samples'])
     if len(data) > 10:
         mid = float((np.min(data) + np.max(data)) / 2.0)
         osc_settings['trig_v'] = round(mid, 2)
         socketio.emit('osc_settings_sync', {'trig_v': osc_settings['trig_v']})
 
-# ---------- MOCK GENERATOR (disabled when serial is connected) ----------
-def mock_data_generator():
-    print("Mock data generator STARTED.")
-    try:
-        while True:
-            # Use generic variable names that match Arduino output
-            abhi = 25.0 + random.uniform(-5.0, 5.0)
-            sensor2 = 60.0 + random.uniform(-10.0, 10.0)
-            sensor3 = 0.5 + random.uniform(-0.2, 0.2)
-            sensor4 = 3.3 + random.uniform(-0.5, 0.5)
-            payload = {
-                'abhi': round(abhi, 2),
-                'sensor2': round(sensor2, 2),
-                'sensor3': round(sensor3, 3),
-                'sensor4': round(sensor4, 2)
-            }
-            global latest_sensor_data
-            latest_sensor_data = payload
-            socketio.emit('sensor_data', payload)
-            eventlet.sleep(0.1)  # faster update rate for smoother chart
-    except eventlet.greenlet.GreenletExit:
-        print("Mock data generator KILLED.")
-    except Exception as e:
-        print("Mock data generator error:", e)
 
 # ---------- SERIAL READER ----------
 def serial_reader_worker(serial_obj):
@@ -1281,7 +1432,10 @@ def handle_list_ports():
 
 @socketio.on('connect_serial')
 def handle_connect_serial(data):
-    global ser, ser_stop, data_generator_thread
+    global ser, ser_stop
+    if not (is_control_enabled('serial_connect') and is_control_enabled('serial_monitor_section')):
+        emit('serial_status', {'status': 'error', 'message': 'Serial Monitor connect is disabled for this session'})
+        return
     port = data.get('port')
     baud = int(data.get('baud', 115200))
     if not port:
@@ -1294,9 +1448,6 @@ def handle_connect_serial(data):
         try:
             if ser and ser.is_open:
                 ser.close()
-            if data_generator_thread:
-                data_generator_thread.kill()
-                data_generator_thread = None
 
             ser = serial.Serial(port, baud, timeout=1)
             ser_stop.clear()
@@ -1308,14 +1459,12 @@ def handle_connect_serial(data):
 
 @socketio.on('disconnect_serial')
 def handle_disconnect_serial():
-    global ser, ser_stop, data_generator_thread
+    global ser, ser_stop
     with serial_lock:
         try:
             ser_stop.set()
             if ser and ser.is_open:
                 ser.close()
-            if data_generator_thread is None:
-                data_generator_thread = eventlet.spawn(mock_data_generator)
             emit('serial_status', {'status': 'disconnected'})
         except Exception as e:
             emit('serial_status', {'status': 'error', 'message': str(e)})
