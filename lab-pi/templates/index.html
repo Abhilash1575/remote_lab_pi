@@ -10,7 +10,8 @@
 <style>
 /* (kept your original styles with small fixes) */
 html,body{height:100%;margin:0;font-family:'Inter',sans-serif;background:#1c1c2b;color:#e0e0e0;overflow:hidden}
-.header-bar{background:#0b2545;padding:12px 20px;display:flex;justify-content:space-between;align-items:center;height:44px}
+.header-bar{background:#0b2545;padding:12px 20px;display:flex;justify-content:space-between;align-items:center;height:44px;position:relative}
+.header-experiment-name{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-size:14px;font-weight:600;color:#00f0ff;white-space:nowrap;max-width:40%;overflow:hidden;text-overflow:ellipsis;pointer-events:none}
 .header-bar h1{margin:0;font-size:16px}
 #timer{background:#e67e22;color:#1c1c2b;padding:6px 12px;border-radius:6px;font-weight:700}
 .container{display:flex;height:calc(100vh - 44px);gap:12px;padding:12px;box-sizing:border-box}
@@ -44,6 +45,19 @@ button{padding:8px 10px;border-radius:6px;border:none;cursor:pointer}
 .var-dropdown{display:none;position:absolute;top:38px;left:0;background:#1e1e2f;border:1px solid #00f0ff55;border-radius:8px;box-shadow:0 0 10px rgba(0,255,255,0.3);z-index:10;min-width:140px;max-height:260px;overflow:auto}
 .var-dropdown .item{padding:8px 10px;cursor:pointer;border-bottom:1px solid #00f0ff22;color:#00f0ff}
 .var-dropdown .item:hover{background:#00f0ff22}
+/* Dynamic-control add dialog */
+.control-dialog-overlay{position:fixed;inset:0;background:rgba(4,6,15,0.65);display:flex;align-items:center;justify-content:center;z-index:2000;animation:cdFadeIn .12s ease-out}
+@keyframes cdFadeIn{from{opacity:0}to{opacity:1}}
+.control-dialog-box{background:#252538;border:1px solid #3d3d52;border-radius:12px;padding:22px 24px;width:340px;max-width:90vw;box-shadow:0 8px 30px rgba(0,0,0,0.55)}
+.control-dialog-box h3{margin:0 0 16px 0;color:#00f0ff;font-size:16px}
+.control-dialog-row{margin-bottom:13px;display:flex;flex-direction:column;gap:5px}
+.control-dialog-row label{font-size:12px;color:#9aaab4;font-weight:600;text-transform:uppercase;letter-spacing:.03em}
+.control-dialog-row input{padding:9px 10px;border-radius:6px;border:1px solid #3d3d52;background:#1c1c2b;color:#00f0ff;font-size:14px;font-family:'Roboto Mono',monospace}
+.control-dialog-row input:focus{outline:none;border-color:#00f0ff;box-shadow:0 0 0 2px #00f0ff33}
+.control-dialog-hint{font-size:11px;color:#6d7a85}
+.control-dialog-btns{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
+.control-dialog-btns button{padding:8px 16px}
+.control-dialog-cancel{background:#3d3d52;color:#e0e0e0}
 @media(max-width:900px){.container{flex-direction:column}.left-column{width:100%;order:2}.right-column{order:1}}
 /* small layout tweaks for the new button card */
 .left-controls-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
@@ -54,6 +68,7 @@ button{padding:8px 10px;border-radius:6px;border:none;cursor:pointer}
 <body>
 <div class="header-bar">
   <h1 id="experimentTitle"> Remote Lab DESE </h1>
+  <div id="experimentNameCenter" class="header-experiment-name" style="{{ 'display:none' if not ui_config.experiment_name }}">{{ ui_config.experiment_name }}</div>
   <div id="timer">Time Left: 00:00</div>
 </div>
 
@@ -130,15 +145,15 @@ button{padding:8px 10px;border-radius:6px;border:none;cursor:pointer}
       <h3>Dynamic Controls</h3>
       <div style="display:flex;gap:8px;margin-bottom:8px">
         <div style="position:relative;display:inline-block">
-          <button id="addSlider" class="primary">Add Slider</button>
+          <button id="addSlider" class="primary" {{ 'disabled' if not ui_config.controls.student_controls_addition }}>Add Slider</button>
         </div>
 
         <div style="position:relative;display:inline-block">
-          <button id="addButton" class="primary">Add Button</button>
+          <button id="addButton" class="primary" {{ 'disabled' if not ui_config.controls.student_controls_addition }}>Add Button</button>
         </div>
 
         <div style="position:relative;display:inline-block">
-          <button id="addReadout" class="primary">Add Readout ⏷</button>
+          <button id="addReadout" class="primary" {{ 'disabled' if not ui_config.controls.student_controls_addition }}>Add Readout ⏷</button>
           <div id="varDropdown" class="var-dropdown"></div>
         </div>
       </div>
@@ -283,6 +298,7 @@ console.log('[DEBUG] boardTypeFromServer:', boardTypeFromServer);
 <script>
 /* ----------------- SOCKET.IO ----------------- */
 const socket = io.connect(window.location.origin, { transports: ['websocket', 'polling'] });
+let currentUiConfig = uiConfigFromServer; // kept in sync by applyUiConfig() on every live update
 
 // Dynamic host configuration - automatically detects IP and ports
 const BASE_URL = window.location.origin;
@@ -546,6 +562,7 @@ socket.on('ports_list', (ports) => {
     const opt = document.createElement('option'); opt.value = p; opt.innerText = p;
     serialPortSelect.appendChild(opt);
   });
+  maybeAutoConnect();
 });
 requestPorts();
 
@@ -626,14 +643,17 @@ baudSelect.addEventListener('change', () => {
 });
 
 let serialConnected = false;
+let autoConnectAttempted = false;
 
-connectBtn.addEventListener('click', () => {
+function doConnect() {
   if (serialConnected) {
+    const allow = !currentUiConfig || !currentUiConfig.defaults || currentUiConfig.defaults.serial_monitor_allow_disconnect !== false;
+    if (!allow) return; // disconnect locked by admin
     socket.emit('disconnect_serial');
     feedbackAdd('Requested disconnect.');
     return;
   }
-  
+
   const port = serialPortSelect.value || '/dev/ttyUSB0';
   const baud = (baudSelect.value==='custom') ? parseInt(customBaud.value||'115200') : parseInt(baudSelect.value);
   connectBtn.disabled = true;
@@ -646,7 +666,20 @@ connectBtn.addEventListener('click', () => {
     connectBtn.disabled = false;
     connectBtn.textContent = 'Connect';
   }, 6000);
-});
+}
+connectBtn.addEventListener('click', doConnect);
+
+// Auto-connect once on load, if the admin has configured it as the default
+function maybeAutoConnect() {
+  if (autoConnectAttempted || serialConnected) return;
+  const d = uiConfigFromServer && uiConfigFromServer.defaults;
+  const c = uiConfigFromServer && uiConfigFromServer.controls;
+  if (!d || !c || !d.serial_monitor_auto_connect) return;
+  if (!c.serial_connect) return; // section visibility doesn't gate the actual connection
+  if (!serialPortSelect.value) return; // no port detected yet
+  autoConnectAttempted = true;
+  doConnect();
+}
 
 sendBtn.addEventListener('click', () => {
   const txt = cmdInput.value.trim(); if(!txt) return;
@@ -666,8 +699,10 @@ socket.on('serial_status', (info) => {
   if(connectTimeoutHandle){ clearTimeout(connectTimeoutHandle); connectTimeoutHandle = null; }
   if(info && info.status === 'connected'){
     serialConnected = true;
-    connectBtn.disabled = false;
-    connectBtn.textContent = 'Disconnect';
+    const allowDisconnect = !currentUiConfig || !currentUiConfig.defaults || currentUiConfig.defaults.serial_monitor_allow_disconnect !== false;
+    connectBtn.disabled = !allowDisconnect;
+    connectBtn.textContent = allowDisconnect ? 'Disconnect' : 'Connected';
+    connectBtn.title = allowDisconnect ? '' : 'Disconnect locked by lab administrator';
     connectBtn.style.background = '#ff6b6b';
     connectBtn.style.color = '#fff';
     feedbackAdd(`✅ Connected: ${info.port}@${info.baud}`);
@@ -796,6 +831,80 @@ socket.on('feedback', (line) => {
 
 /* ----------------- DYNAMIC CONTROLS (auto variable choices) ----------------- */
 let knownSensorKeys = new Set(); // dynamic now - starts empty, populated from current data
+
+/* Themed replacement for chained prompt() calls: one form, all fields at once.
+   Returns a Promise resolving to {key: value, ...} or null if cancelled. */
+function showControlDialog(opts) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.className = 'control-dialog-overlay';
+
+    const box = document.createElement('div');
+    box.className = 'control-dialog-box';
+
+    const heading = document.createElement('h3');
+    heading.innerText = opts.title;
+    box.appendChild(heading);
+
+    const inputs = {};
+    (opts.fields || []).forEach((f) => {
+      const row = document.createElement('div');
+      row.className = 'control-dialog-row';
+      const lbl = document.createElement('label');
+      lbl.innerText = f.label;
+      lbl.htmlFor = 'cd-' + f.key;
+      row.appendChild(lbl);
+      const inp = document.createElement('input');
+      inp.type = f.type || 'text';
+      inp.id = 'cd-' + f.key;
+      if (f.value !== undefined) inp.value = f.value;
+      if (f.placeholder) inp.placeholder = f.placeholder;
+      row.appendChild(inp);
+      if (f.hint) {
+        const hint = document.createElement('div');
+        hint.className = 'control-dialog-hint';
+        hint.innerText = f.hint;
+        row.appendChild(hint);
+      }
+      box.appendChild(row);
+      inputs[f.key] = inp;
+    });
+
+    const btnRow = document.createElement('div');
+    btnRow.className = 'control-dialog-btns';
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.className = 'control-dialog-cancel';
+    cancelBtn.innerText = 'Cancel';
+    const submitBtn = document.createElement('button');
+    submitBtn.type = 'button';
+    submitBtn.className = 'primary';
+    submitBtn.innerText = opts.submitLabel || 'Add';
+    btnRow.appendChild(cancelBtn);
+    btnRow.appendChild(submitBtn);
+    box.appendChild(btnRow);
+
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+
+    const finish = (result) => { overlay.remove(); resolve(result); };
+    cancelBtn.addEventListener('click', () => finish(null));
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) finish(null); });
+    submitBtn.addEventListener('click', () => {
+      const values = {};
+      Object.keys(inputs).forEach((k) => { values[k] = inputs[k].value; });
+      finish(values);
+    });
+    box.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); submitBtn.click(); }
+      else if (e.key === 'Escape') { e.preventDefault(); cancelBtn.click(); }
+    });
+
+    const first = Object.values(inputs)[0];
+    if (first) { first.focus(); first.select(); }
+  });
+}
+
 function createControlElement(cfg){
   const wrapper = document.createElement('div');
   wrapper.className='control-row';
@@ -816,7 +925,7 @@ function createControlElement(cfg){
   content.style.gap='6px';
 
   const label = document.createElement('div');
-  label.innerText = cfg.label + (cfg.locked ? ' 🔒' : '');
+  label.innerText = cfg.label;
   label.style.fontWeight='700';
   label.style.minWidth='100px';
   content.appendChild(label);
@@ -835,6 +944,8 @@ function createControlElement(cfg){
     const slider = document.createElement('input');
     slider.type='range';
     slider.setAttribute('data-key', cfg.dataKey || '');
+    const cmdFormat = cfg.cmdFormat || '{value}';
+    slider.setAttribute('data-cmd-format', cmdFormat);
     slider.min = cfg.min || 0;
     slider.max = cfg.max || 1023;
     slider.value = cfg.value !== undefined ? cfg.value : Math.floor(((Number(slider.min)||0)+(Number(slider.max)||1023))/2);
@@ -849,7 +960,7 @@ function createControlElement(cfg){
 
     slider.oninput = () => {
       valSpan.innerText = slider.value;
-      const cmd = `${slider.value}`;  // ✅ send ONLY the numeric value
+      const cmd = cmdFormat.replace(/\{value\}/g, slider.value);  // e.g. "{value}" -> "42", "I{value}" -> "I42"
       if (sliderTimeout) clearTimeout(sliderTimeout);
       sliderTimeout = setTimeout(() => {
         socket.emit('send_command', { cmd });
@@ -870,7 +981,9 @@ else if(cfg.type === 'button'){
   btn.className = 'primary';
   btn.innerText = cfg.label || 'TOGGLE';
   btn.style.minWidth = '120px';
-  
+  btn.setAttribute('data-on-cmd', onCmd);
+  btn.setAttribute('data-off-cmd', offCmd);
+
   let toggled = false;
   btn.onclick = () => {
     toggled = !toggled;
@@ -918,25 +1031,47 @@ function renderRequiredControls(list) {
 }
 
 /* Add slider — created directly, no variable dropdown */
-addSliderBtn.addEventListener('click', () => {
-  const label = prompt('Enter label for slider:', 'SLIDER') || 'SLIDER';
-  const minVal = parseInt(prompt(`Enter MIN value for ${label}:`, '0'));
-  const maxVal = parseInt(prompt(`Enter MAX value for ${label}:`, '1023'));
+addSliderBtn.addEventListener('click', async () => {
+  const result = await showControlDialog({
+    title: 'Add Slider',
+    submitLabel: 'Add Slider',
+    fields: [
+      { key: 'label', label: 'Label', value: 'SLIDER' },
+      { key: 'min', label: 'Min value', type: 'number', value: '0' },
+      { key: 'max', label: 'Max value', type: 'number', value: '1023' },
+      { key: 'cmdFormat', label: 'Command format', value: '{value}', hint: 'Use {value} as a placeholder, e.g. {value} or I{value}' },
+    ],
+  });
+  if (!result) return;
+  const label = (result.label || 'SLIDER').trim() || 'SLIDER';
+  const minVal = parseInt(result.min);
+  const maxVal = parseInt(result.max);
+  const cmdFormat = (result.cmdFormat || '').trim() || '{value}';
   createControlElement({
     type: 'slider',
     label: label.toUpperCase(),
     dataKey: label.toLowerCase().replace(/\s+/g, '_'),
     min: isNaN(minVal) ? 0 : minVal,
     max: isNaN(maxVal) ? 1023 : maxVal,
-    cmdTemplate: `{key}:{value}`
+    cmdFormat
   });
   saveLayoutToStorage();
 });
 
 /* Add button — created directly, no variable dropdown */
-addButtonBtn.addEventListener('click', () => {
-  const label = prompt('Button label (display):', 'TOGGLE_BUTTON') || 'TOGGLE_BUTTON';
-  createControlElement({ type: 'button', label });
+addButtonBtn.addEventListener('click', async () => {
+  const result = await showControlDialog({
+    title: 'Add Button',
+    submitLabel: 'Add Button',
+    fields: [
+      { key: 'label', label: 'Label', value: 'TOGGLE_BUTTON' },
+      { key: 'onCmd', label: 'ON command', value: '1' },
+      { key: 'offCmd', label: 'OFF command', value: '0' },
+    ],
+  });
+  if (!result) return;
+  const label = (result.label || 'TOGGLE_BUTTON').trim() || 'TOGGLE_BUTTON';
+  createControlElement({ type: 'button', label, onCmd: result.onCmd || '', offCmd: result.offCmd || '' });
   saveLayoutToStorage();
 });
 
@@ -959,11 +1094,12 @@ function saveLayoutToStorage() {
       const label = labelDiv ? labelDiv.innerText : '';
       const sliderEl = r.querySelector('input[type="range"]');
       const dataKey = sliderEl.getAttribute('data-key') || '';
+      const cmdFormat = sliderEl.getAttribute('data-cmd-format') || '{value}';
       // Skip duplicate controls with same label
       const key = 'slider:' + label;
       if (seen.has(key)) return;
       seen.add(key);
-      arr.push({type:'slider', label: label, dataKey: dataKey, min: sliderEl.min, max: sliderEl.max});
+      arr.push({type:'slider', label: label, dataKey: dataKey, min: sliderEl.min, max: sliderEl.max, cmdFormat: cmdFormat});
     } else if(r.querySelector('button.primary')) {
       const label = r.querySelector('div').innerText;
       // Skip duplicate controls with same label
@@ -971,7 +1107,10 @@ function saveLayoutToStorage() {
       if (seen.has(key)) return;
       seen.add(key);
       const sel = r.querySelector('select');
-      arr.push({type:'button', label: label, dataKey: sel ? sel.value : ''});
+      const btnEl = r.querySelector('button.primary');
+      const onCmd = btnEl.getAttribute('data-on-cmd');
+      const offCmd = btnEl.getAttribute('data-off-cmd');
+      arr.push({type:'button', label: label, dataKey: sel ? sel.value : '', onCmd: onCmd !== null ? onCmd : undefined, offCmd: offCmd !== null ? offCmd : undefined});
     } else if(r.querySelector('.readout-value')) {
       const key = r.querySelector('.readout-value').getAttribute('data-key');
       const labelEl = r.querySelector('div');
@@ -1299,17 +1438,28 @@ function autoCreateSlidersFromSensors(payloadKeys){
       const item = document.createElement('div');
       item.className = 'item';
       item.innerText = nk;
-      item.onclick = () => {
+      item.onclick = async () => {
         // When clicked, default action is to create a slider for that variable
-        const minVal = parseInt(prompt(`Enter MIN value for ${nk}:`, '0'));
-        const maxVal = parseInt(prompt(`Enter MAX value for ${nk}:`, '1023'));
+        const result = await showControlDialog({
+          title: `Add Slider for "${nk}"`,
+          submitLabel: 'Add Slider',
+          fields: [
+            { key: 'min', label: 'Min value', type: 'number', value: '0' },
+            { key: 'max', label: 'Max value', type: 'number', value: '1023' },
+            { key: 'cmdFormat', label: 'Command format', value: '{value}', hint: 'Use {value} as a placeholder, e.g. {value} or I{value}' },
+          ],
+        });
+        if (!result) return;
+        const minVal = parseInt(result.min);
+        const maxVal = parseInt(result.max);
+        const cmdFormat = (result.cmdFormat || '').trim() || '{value}';
         createControlElement({
           type: 'slider',
           label: nk.toUpperCase(),
           min: isNaN(minVal) ? 0 : minVal,
           max: isNaN(maxVal) ? 1023 : maxVal,
           dataKey: nk,
-          cmdTemplate: `{key}:{value}`
+          cmdFormat
         });
         saveLayoutToStorage();
         // visually dim this item so user doesn't create same slider repeatedly
@@ -1334,9 +1484,20 @@ function showVarDropdown(mode){
       const item = document.createElement('div');
       item.className = 'item';
       item.innerText = k;
-      item.onclick = () => {
-        const label = prompt('Readout label (display):', k) || k;
-        createControlElement({ type:'readout', label, dataKey: k, unit: '', decimals: 1 });
+      item.onclick = async () => {
+        const result = await showControlDialog({
+          title: `Add Readout for "${k}"`,
+          submitLabel: 'Add Readout',
+          fields: [
+            { key: 'label', label: 'Label', value: k },
+            { key: 'unit', label: 'Unit (optional)', value: '', placeholder: 'e.g. V, A, C' },
+            { key: 'decimals', label: 'Decimal places', type: 'number', value: '1' },
+          ],
+        });
+        if (!result) return;
+        const label = (result.label || k).trim() || k;
+        const decimals = parseInt(result.decimals);
+        createControlElement({ type:'readout', label, dataKey: k, unit: result.unit || '', decimals: isNaN(decimals) ? 1 : decimals });
         saveLayoutToStorage();
         hideVarDropdown();
       };
@@ -1414,6 +1575,7 @@ socket.on('board_type_updated', (data) => {
 /* ----------------- Admin-configured UI controls ----------------- */
 function applyUiConfig(cfg) {
   if (!cfg) return;
+  currentUiConfig = cfg;
   const controls = cfg.controls || {};
   const setDisabled = (el, disabled) => {
     if (!el) return;
@@ -1427,6 +1589,15 @@ function applyUiConfig(cfg) {
   setDisabled(document.getElementById('connectBtn'), !controls.serial_connect);
   setDisabled(document.getElementById('factoryResetBtn'), !controls.factory_reset);
   setDisabled(document.getElementById('powerSupplyBtn'), !controls.power_supply);
+  setDisabled(document.getElementById('addSlider'), !controls.student_controls_addition);
+  setDisabled(document.getElementById('addButton'), !controls.student_controls_addition);
+  setDisabled(document.getElementById('addReadout'), !controls.student_controls_addition);
+
+  const nameCenterEl = document.getElementById('experimentNameCenter');
+  if (nameCenterEl) {
+    nameCenterEl.innerText = cfg.experiment_name || '';
+    nameCenterEl.style.display = cfg.experiment_name ? '' : 'none';
+  }
 
   const serialMonitorCard = document.getElementById('serialMonitorCard');
   if (serialMonitorCard) serialMonitorCard.style.display = controls.serial_monitor_section ? '' : 'none';
@@ -1451,6 +1622,14 @@ function applyUiConfig(cfg) {
 
   const dcCard = document.getElementById('dynamicControlsCard');
   if (dcCard && cfg.defaults) dcCard.style.display = cfg.defaults.dynamic_controls_visible ? '' : 'none';
+
+  // If already connected, an admin flipping "allow disconnect" off/on takes effect immediately,
+  // overriding the generic serial_connect disable above (which only governs starting a connection).
+  if (typeof serialConnected !== 'undefined' && serialConnected && controls.serial_connect) {
+    const allowDisconnect = !cfg.defaults || cfg.defaults.serial_monitor_allow_disconnect !== false;
+    connectBtn.disabled = !allowDisconnect;
+    connectBtn.title = allowDisconnect ? '' : 'Disconnect locked by lab administrator';
+  }
 
   renderRequiredControls(cfg.required_controls || []);
 }

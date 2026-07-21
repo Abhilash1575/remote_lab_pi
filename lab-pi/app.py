@@ -807,8 +807,11 @@ def admin_settings():
         new_defaults = {
             'main_view': main_view,
             'dynamic_controls_visible': request.form.get('dynamic_controls_visible') == 'on',
+            'serial_monitor_auto_connect': request.form.get('serial_monitor_auto_connect') == 'on',
+            'serial_monitor_allow_disconnect': request.form.get('serial_monitor_allow_disconnect') == 'on',
         }
-        cfg = save_ui_config(new_controls, new_defaults)
+        experiment_name = (request.form.get('experiment_name') or '').strip()
+        cfg = save_ui_config(new_controls, new_defaults, experiment_name=experiment_name)
         socketio.emit('ui_config_updated', get_effective_ui_config())
         saved = True
 
@@ -859,6 +862,7 @@ def admin_add_required_control():
             except (TypeError, ValueError):
                 control['max'] = 1023
             control['dataKey'] = label.lower().replace(' ', '_')
+            control['cmdFormat'] = (request.form.get('rc_cmd_format') or '').strip() or '{value}'
         elif rc_type == 'button':
             control['onCmd'] = request.form.get('rc_on_cmd', '1')
             control['offCmd'] = request.form.get('rc_off_cmd', '0')
@@ -1433,7 +1437,9 @@ def handle_list_ports():
 @socketio.on('connect_serial')
 def handle_connect_serial(data):
     global ser, ser_stop
-    if not (is_control_enabled('serial_connect') and is_control_enabled('serial_monitor_section')):
+    # serial_monitor_section only hides the card in the UI; serial_connect is the sole
+    # functional gate, so auto-connect (or a manual reconnect) still works when hidden.
+    if not is_control_enabled('serial_connect'):
         emit('serial_status', {'status': 'error', 'message': 'Serial Monitor connect is disabled for this session'})
         return
     port = data.get('port')

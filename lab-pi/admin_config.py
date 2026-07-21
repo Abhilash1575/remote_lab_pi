@@ -28,13 +28,20 @@ CONTROL_KEYS = [
     ('power_supply', 'Power Supply ON/OFF'),
     ('serial_monitor_section', 'Serial Monitor & Connect (whole section)'),
     ('oscilloscope', 'Oscilloscope View'),
+    ('student_controls_addition', "Students Can Add Their Own Dynamic Controls"),
 ]
 
 DEFAULT_UI_CONFIG = {
     'version': 1,
     'controls': {key: True for key, _ in CONTROL_KEYS},
-    'defaults': {'main_view': 'plotter', 'dynamic_controls_visible': True},
+    'defaults': {
+        'main_view': 'plotter',
+        'dynamic_controls_visible': True,
+        'serial_monitor_auto_connect': False,
+        'serial_monitor_allow_disconnect': True,
+    },
     'required_controls': [],
+    'experiment_name': 'Remote Lab DESE',
     'updated_at': None,
 }
 
@@ -54,6 +61,8 @@ def load_ui_config(force_reload=False):
             cfg['defaults'].update(on_disk.get('defaults', {}))
             if 'required_controls' in on_disk:
                 cfg['required_controls'] = on_disk['required_controls']
+            if on_disk.get('experiment_name'):
+                cfg['experiment_name'] = on_disk['experiment_name']
             cfg['updated_at'] = on_disk.get('updated_at')
         except Exception as e:
             print(f"[AdminConfig] Failed to load ui_config.json, using defaults: {e}")
@@ -71,6 +80,10 @@ def get_effective_ui_config():
         cfg['defaults']['main_view'] = 'oscilloscope' if controls.get('oscilloscope', True) else main_view
     elif main_view == 'oscilloscope' and not controls.get('oscilloscope', True):
         cfg['defaults']['main_view'] = 'plotter' if controls.get('serial_plotter', True) else main_view
+    # serial_monitor_section only hides the card in the UI; serial_connect is the sole
+    # functional gate, so auto-connect still runs even when the section is hidden.
+    if not controls.get('serial_connect', True):
+        cfg['defaults']['serial_monitor_auto_connect'] = False
     return cfg
 
 
@@ -83,10 +96,12 @@ def _persist(cfg):
     return cfg
 
 
-def save_ui_config(new_controls, new_defaults):
+def save_ui_config(new_controls, new_defaults, experiment_name=None):
     cfg = load_ui_config()
     cfg['controls'].update(new_controls)
     cfg['defaults'].update(new_defaults)
+    if experiment_name:
+        cfg['experiment_name'] = experiment_name
     return _persist(cfg)
 
 

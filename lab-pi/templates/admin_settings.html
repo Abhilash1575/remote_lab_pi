@@ -5,24 +5,29 @@
 <title>Admin Settings - Lab Pi</title>
 <style>
 html,body{margin:0;font-family:'Inter',sans-serif;background:#1c1c2b;color:#e0e0e0}
-.header-bar{background:#0b2545;padding:12px 20px;display:flex;justify-content:space-between;align-items:center}
-.header-bar h1{margin:0;font-size:16px;color:#00f0ff}
+.header-bar{background:#0b2545;padding:12px 20px;display:flex;justify-content:space-between;align-items:center;gap:16px;position:sticky;top:0;z-index:10}
+.header-bar h1{margin:0;font-size:16px;color:#00f0ff;white-space:nowrap}
+.header-bar .right{display:flex;align-items:center;gap:14px}
 .header-bar a{color:#9aaab4;text-decoration:none;font-size:13px}
 .header-bar a:hover{color:#e0e0e0}
-.wrap{max-width:640px;margin:24px auto;padding:0 16px;display:flex;flex-direction:column;gap:16px}
+.header-bar button{padding:8px 18px}
+.wrap{max-width:980px;margin:24px auto;padding:0 16px;display:flex;flex-direction:column;gap:16px}
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start}
+@media(max-width:720px){.grid-2{grid-template-columns:1fr}}
 .card{background:#252538;padding:18px 20px;border-radius:10px;border:1px solid #3d3d52;box-shadow:0 0 10px rgba(0,0,0,0.4)}
 .card h2{color:#00f0ff;margin:0 0 4px 0;font-size:15px}
 .card p.sub{color:#9aaab4;font-size:13px;margin:0 0 14px 0}
-.row{display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid #3d3d5233}
+.row{display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid #3d3d5233;gap:12px}
 .row:last-child{border-bottom:none}
 .row label{font-size:14px}
-.switch{position:relative;display:inline-block;width:42px;height:24px}
+.switch{position:relative;display:inline-block;width:42px;height:24px;flex-shrink:0}
 .switch input{opacity:0;width:0;height:0}
 .slider{position:absolute;cursor:pointer;inset:0;background:#3d3d52;border-radius:24px;transition:.15s}
 .slider:before{content:"";position:absolute;height:18px;width:18px;left:3px;bottom:3px;background:#e0e0e0;border-radius:50%;transition:.15s}
 input:checked + .slider{background:#00f0ff}
 input:checked + .slider:before{transform:translateX(18px);background:#041726}
 select, input[type=password], input[type=text], input[type=number]{padding:8px;border-radius:6px;border:none;background:#3d3d52;color:#00f0ff}
+input[type=text].wide{width:100%;box-sizing:border-box}
 button{padding:9px 16px;border-radius:6px;border:none;cursor:pointer;background:#00f0ff;color:#041726;font-weight:700}
 .note{font-size:12px;color:#9aaab4;margin-top:4px}
 .banner{background:#2ecc7122;border:1px solid #2ecc71;color:#2ecc71;padding:8px 12px;border-radius:6px;font-size:13px}
@@ -33,58 +38,80 @@ button{padding:9px 16px;border-radius:6px;border:none;cursor:pointer;background:
 <body>
 <div class="header-bar">
   <h1>Lab Pi &mdash; Admin Settings</h1>
-  <a href="{{ url_for('admin_logout') }}">Log out</a>
+  <div class="right">
+    <button type="submit" form="settingsForm">Save Settings</button>
+    <a href="{{ url_for('admin_logout') }}">Log out</a>
+  </div>
 </div>
 <div class="wrap">
   {% if saved %}<div class="banner">Settings saved and pushed live to connected sessions.</div>{% endif %}
 
-  <form method="post" action="{{ url_for('admin_settings') }}">
-    <div class="card">
-      <h2>Student Controls</h2>
-      <p class="sub">Disabled controls are greyed out for students and rejected server-side.</p>
-      {% for key, label in control_keys %}
-      <div class="row">
-        <label for="control_{{ key }}">{{ label }}</label>
-        <label class="switch">
-          <input type="checkbox" id="control_{{ key }}" name="control_{{ key }}" {{ 'checked' if cfg.controls.get(key, True) }}>
-          <span class="slider"></span>
-        </label>
-      </div>
-      {% endfor %}
+  <form id="settingsForm" method="post" action="{{ url_for('admin_settings') }}">
+    <div class="card" style="margin-bottom:16px">
+      <h2>Experiment</h2>
+      <p class="sub">Shown in the top bar of the student page.</p>
+      <input type="text" class="wide" name="experiment_name" value="{{ cfg.experiment_name }}" placeholder="Remote Lab DESE">
     </div>
 
-    <div class="card">
-      <h2>Defaults</h2>
-      <p class="sub">Applied when a student's session loads.</p>
-      <div class="row">
-        <label>Default view</label>
-        <div class="radio-group">
-          <label><input type="radio" name="main_view" value="plotter" {{ 'checked' if cfg.defaults.main_view == 'plotter' }} {{ 'disabled' if not cfg.controls.get('serial_plotter', True) }}> Serial Plotter</label>
-          <label><input type="radio" name="main_view" value="oscilloscope" {{ 'checked' if cfg.defaults.main_view == 'oscilloscope' }} {{ 'disabled' if not cfg.controls.get('oscilloscope', True) }}> Oscilloscope</label>
+    <div class="grid-2">
+      <div class="card">
+        <h2>Student Controls</h2>
+        <p class="sub">Disabled controls are greyed out for students and rejected server-side.</p>
+        {% for key, label in control_keys %}
+        <div class="row">
+          <label for="control_{{ key }}">{{ label }}</label>
+          <label class="switch">
+            <input type="checkbox" id="control_{{ key }}" name="control_{{ key }}" {{ 'checked' if cfg.controls.get(key, True) }}>
+            <span class="slider"></span>
+          </label>
         </div>
+        {% endfor %}
       </div>
-      <div class="row">
-        <label for="dynamic_controls_visible">Dynamic Controls panel visible by default</label>
-        <label class="switch">
-          <input type="checkbox" id="dynamic_controls_visible" name="dynamic_controls_visible" {{ 'checked' if cfg.defaults.dynamic_controls_visible }}>
-          <span class="slider"></span>
-        </label>
-      </div>
-    </div>
 
-    <div>
-      <button type="submit">Save Settings</button>
+      <div class="card">
+        <h2>Defaults</h2>
+        <p class="sub">Applied when a student's session loads.</p>
+        <div class="row">
+          <label>Default view</label>
+          <div class="radio-group">
+            <label><input type="radio" name="main_view" value="plotter" {{ 'checked' if cfg.defaults.main_view == 'plotter' }} {{ 'disabled' if not cfg.controls.get('serial_plotter', True) }}> Serial Plotter</label>
+            <label><input type="radio" name="main_view" value="oscilloscope" {{ 'checked' if cfg.defaults.main_view == 'oscilloscope' }} {{ 'disabled' if not cfg.controls.get('oscilloscope', True) }}> Oscilloscope</label>
+          </div>
+        </div>
+        <div class="row">
+          <label for="dynamic_controls_visible">Dynamic Controls panel visible by default</label>
+          <label class="switch">
+            <input type="checkbox" id="dynamic_controls_visible" name="dynamic_controls_visible" {{ 'checked' if cfg.defaults.dynamic_controls_visible }}>
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="row">
+          <label for="serial_monitor_auto_connect">Serial Monitor auto-connects when session loads</label>
+          <label class="switch">
+            <input type="checkbox" id="serial_monitor_auto_connect" name="serial_monitor_auto_connect" {{ 'checked' if cfg.defaults.serial_monitor_auto_connect }} {{ 'disabled' if not cfg.controls.get('serial_connect', True) }}>
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="row">
+          <label for="serial_monitor_allow_disconnect">Students can disconnect once connected</label>
+          <label class="switch">
+            <input type="checkbox" id="serial_monitor_allow_disconnect" name="serial_monitor_allow_disconnect" {{ 'checked' if cfg.defaults.serial_monitor_allow_disconnect }}>
+            <span class="slider"></span>
+          </label>
+        </div>
+        <p class="note">If auto-connect is on and disconnect is off, students get a connection they can't turn off. Auto-connect still works even if "Serial Monitor & Connect (whole section)" above is turned off — hiding the card doesn't stop the connection itself.</p>
+      </div>
     </div>
   </form>
 
   <div class="card">
     <h2>Required Dynamic Controls</h2>
-    <p class="sub">Always shown to students by default; they can't remove or edit these. Students can still add and remove their own separate controls.</p>
+    <p class="sub">Always shown to students by default; they can't remove or edit these. Students can still add and remove their own separate controls (unless "Students Can Add Their Own Dynamic Controls" above is off).</p>
 
     {% if cfg.required_controls %}
       {% for c in cfg.required_controls %}
       <div class="row">
-        <label>{{ c.label }} <span class="note">({{ c.type }})</span></label>
+        <label>{{ c.label }} <span class="note">({{ c.type }}{{ ', ' + c.cmdFormat if c.type == 'slider' and c.cmdFormat }})</span></label>
         <form method="post" action="{{ url_for('admin_delete_required_control') }}" style="margin:0">
           <input type="hidden" name="control_id" value="{{ c.id }}">
           <button type="submit" style="background:#ff6b6b;color:#101018;padding:5px 10px;">Remove</button>
@@ -111,6 +138,8 @@ button{padding:9px 16px;border-radius:6px;border:none;cursor:pointer;background:
       <div id="rc_fields_slider" class="rc-fields">
         <div class="row"><label for="rc_min">Min</label><input type="number" id="rc_min" name="rc_min" value="0" style="width:100px"></div>
         <div class="row"><label for="rc_max">Max</label><input type="number" id="rc_max" name="rc_max" value="1023" style="width:100px"></div>
+        <div class="row"><label for="rc_cmd_format">Command format</label><input type="text" id="rc_cmd_format" name="rc_cmd_format" value="{value}" style="width:140px"></div>
+        <p class="note">Use <code>{value}</code> as the placeholder, e.g. <code>{value}</code>, <code>I{value}</code>, or <code>{value}A</code>.</p>
       </div>
       <div id="rc_fields_button" class="rc-fields" style="display:none">
         <div class="row"><label for="rc_on_cmd">On command</label><input type="text" id="rc_on_cmd" name="rc_on_cmd" value="1" style="width:140px"></div>
