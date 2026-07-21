@@ -52,8 +52,8 @@ button{padding:8px 10px;border-radius:6px;border:none;cursor:pointer}
 .control-dialog-box h3{margin:0 0 16px 0;color:#00f0ff;font-size:16px}
 .control-dialog-row{margin-bottom:13px;display:flex;flex-direction:column;gap:5px}
 .control-dialog-row label{font-size:12px;color:#9aaab4;font-weight:600;text-transform:uppercase;letter-spacing:.03em}
-.control-dialog-row input{padding:9px 10px;border-radius:6px;border:1px solid #3d3d52;background:#1c1c2b;color:#00f0ff;font-size:14px;font-family:'Roboto Mono',monospace}
-.control-dialog-row input:focus{outline:none;border-color:#00f0ff;box-shadow:0 0 0 2px #00f0ff33}
+.control-dialog-row input,.control-dialog-row select{padding:9px 10px;border-radius:6px;border:1px solid #3d3d52;background:#1c1c2b;color:#00f0ff;font-size:14px;font-family:'Roboto Mono',monospace}
+.control-dialog-row input:focus,.control-dialog-row select:focus{outline:none;border-color:#00f0ff;box-shadow:0 0 0 2px #00f0ff33}
 .control-dialog-hint{font-size:11px;color:#6d7a85}
 .control-dialog-btns{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
 .control-dialog-btns button{padding:8px 16px}
@@ -562,6 +562,15 @@ socket.on('ports_list', (ports) => {
     const opt = document.createElement('option'); opt.value = p; opt.innerText = p;
     serialPortSelect.appendChild(opt);
   });
+  // Pre-select the admin's default port, if it's actually detected on this Pi.
+  // Falls back to the browser's natural first-option selection otherwise.
+  if (typeof serialConnected !== 'undefined' && !serialConnected) {
+    const d = uiConfigFromServer && uiConfigFromServer.defaults;
+    const defaultPort = d && d.serial_monitor_default_port;
+    if (defaultPort && ports && ports.includes(defaultPort)) {
+      serialPortSelect.value = defaultPort;
+    }
+  }
   maybeAutoConnect();
 });
 requestPorts();
@@ -854,11 +863,24 @@ function showControlDialog(opts) {
       lbl.innerText = f.label;
       lbl.htmlFor = 'cd-' + f.key;
       row.appendChild(lbl);
-      const inp = document.createElement('input');
-      inp.type = f.type || 'text';
+      let inp;
+      if (f.type === 'select') {
+        inp = document.createElement('select');
+        (f.options || []).forEach((o) => {
+          const opt = document.createElement('option');
+          opt.value = o.value;
+          opt.innerText = o.label;
+          if (String(o.value) === String(f.value)) opt.selected = true;
+          inp.appendChild(opt);
+        });
+      } else {
+        inp = document.createElement('input');
+        inp.type = f.type || 'text';
+        if (inp.type === 'number') inp.step = f.step || 'any'; // allow decimals, not just whole-number steps
+        if (f.value !== undefined) inp.value = f.value;
+        if (f.placeholder) inp.placeholder = f.placeholder;
+      }
       inp.id = 'cd-' + f.key;
-      if (f.value !== undefined) inp.value = f.value;
-      if (f.placeholder) inp.placeholder = f.placeholder;
       row.appendChild(inp);
       if (f.hint) {
         const hint = document.createElement('div');
@@ -901,7 +923,7 @@ function showControlDialog(opts) {
     });
 
     const first = Object.values(inputs)[0];
-    if (first) { first.focus(); first.select(); }
+    if (first) { first.focus(); if (first.select) first.select(); }
   });
 }
 
@@ -946,21 +968,27 @@ function createControlElement(cfg){
     slider.setAttribute('data-key', cfg.dataKey || '');
     const cmdFormat = cfg.cmdFormat || '{value}';
     slider.setAttribute('data-cmd-format', cmdFormat);
-    slider.min = cfg.min || 0;
-    slider.max = cfg.max || 1023;
-    slider.value = cfg.value !== undefined ? cfg.value : Math.floor(((Number(slider.min)||0)+(Number(slider.max)||1023))/2);
+    // Resolution: 0 = whole numbers, 1 = "0.0", 2 = "0.00"
+    const precision = Math.max(0, Math.min(2, parseInt(cfg.precision, 10) || 0));
+    slider.setAttribute('data-precision', precision);
+    slider.min = cfg.min !== undefined ? cfg.min : 0;
+    slider.max = cfg.max !== undefined ? cfg.max : 1023;
+    slider.step = precision > 0 ? (1 / Math.pow(10, precision)) : 1;
+    const initialValue = cfg.value !== undefined ? Number(cfg.value) : ((Number(slider.min)||0)+(Number(slider.max)||1023))/2;
+    slider.value = initialValue.toFixed(precision);
     slider.style.flex='1';
 
     const valSpan = document.createElement('span');
-    valSpan.innerText = slider.value;
+    valSpan.innerText = Number(slider.value).toFixed(precision);
     valSpan.style.marginLeft='8px';
     valSpan.style.minWidth='30px';
 
     let sliderTimeout = null;
 
     slider.oninput = () => {
-      valSpan.innerText = slider.value;
-      const cmd = cmdFormat.replace(/\{value\}/g, slider.value);  // e.g. "{value}" -> "42", "I{value}" -> "I42"
+      const displayValue = Number(slider.value).toFixed(precision);
+      valSpan.innerText = displayValue;
+      const cmd = cmdFormat.replace(/\{value\}/g, displayValue);  // e.g. "{value}" -> "42.00", "I{value}" -> "I42.00"
       if (sliderTimeout) clearTimeout(sliderTimeout);
       sliderTimeout = setTimeout(() => {
         socket.emit('send_command', { cmd });
@@ -1030,6 +1058,16 @@ function renderRequiredControls(list) {
   });
 }
 
+/* Slider resolution options, shared by every slider-creation dialog */
+const SLIDER_RESOLUTION_FIELD = {
+  key: 'precision', label: 'Resolution', type: 'select', value: '0',
+  options: [
+    { value: '0', label: '0 (whole numbers)' },
+    { value: '1', label: '0.0 (1 decimal)' },
+    { value: '2', label: '0.00 (2 decimals)' },
+  ],
+};
+
 /* Add slider — created directly, no variable dropdown */
 addSliderBtn.addEventListener('click', async () => {
   const result = await showControlDialog({
@@ -1039,13 +1077,14 @@ addSliderBtn.addEventListener('click', async () => {
       { key: 'label', label: 'Label', value: 'SLIDER' },
       { key: 'min', label: 'Min value', type: 'number', value: '0' },
       { key: 'max', label: 'Max value', type: 'number', value: '1023' },
+      SLIDER_RESOLUTION_FIELD,
       { key: 'cmdFormat', label: 'Command format', value: '{value}', hint: 'Use {value} as a placeholder, e.g. {value} or I{value}' },
     ],
   });
   if (!result) return;
   const label = (result.label || 'SLIDER').trim() || 'SLIDER';
-  const minVal = parseInt(result.min);
-  const maxVal = parseInt(result.max);
+  const minVal = parseFloat(result.min);
+  const maxVal = parseFloat(result.max);
   const cmdFormat = (result.cmdFormat || '').trim() || '{value}';
   createControlElement({
     type: 'slider',
@@ -1053,6 +1092,7 @@ addSliderBtn.addEventListener('click', async () => {
     dataKey: label.toLowerCase().replace(/\s+/g, '_'),
     min: isNaN(minVal) ? 0 : minVal,
     max: isNaN(maxVal) ? 1023 : maxVal,
+    precision: result.precision,
     cmdFormat
   });
   saveLayoutToStorage();
@@ -1095,11 +1135,12 @@ function saveLayoutToStorage() {
       const sliderEl = r.querySelector('input[type="range"]');
       const dataKey = sliderEl.getAttribute('data-key') || '';
       const cmdFormat = sliderEl.getAttribute('data-cmd-format') || '{value}';
+      const precision = sliderEl.getAttribute('data-precision') || '0';
       // Skip duplicate controls with same label
       const key = 'slider:' + label;
       if (seen.has(key)) return;
       seen.add(key);
-      arr.push({type:'slider', label: label, dataKey: dataKey, min: sliderEl.min, max: sliderEl.max, cmdFormat: cmdFormat});
+      arr.push({type:'slider', label: label, dataKey: dataKey, min: sliderEl.min, max: sliderEl.max, cmdFormat: cmdFormat, precision: precision});
     } else if(r.querySelector('button.primary')) {
       const label = r.querySelector('div').innerText;
       // Skip duplicate controls with same label
@@ -1446,12 +1487,13 @@ function autoCreateSlidersFromSensors(payloadKeys){
           fields: [
             { key: 'min', label: 'Min value', type: 'number', value: '0' },
             { key: 'max', label: 'Max value', type: 'number', value: '1023' },
+            SLIDER_RESOLUTION_FIELD,
             { key: 'cmdFormat', label: 'Command format', value: '{value}', hint: 'Use {value} as a placeholder, e.g. {value} or I{value}' },
           ],
         });
         if (!result) return;
-        const minVal = parseInt(result.min);
-        const maxVal = parseInt(result.max);
+        const minVal = parseFloat(result.min);
+        const maxVal = parseFloat(result.max);
         const cmdFormat = (result.cmdFormat || '').trim() || '{value}';
         createControlElement({
           type: 'slider',
@@ -1459,6 +1501,7 @@ function autoCreateSlidersFromSensors(payloadKeys){
           min: isNaN(minVal) ? 0 : minVal,
           max: isNaN(maxVal) ? 1023 : maxVal,
           dataKey: nk,
+          precision: result.precision,
           cmdFormat
         });
         saveLayoutToStorage();
@@ -1491,7 +1534,7 @@ function showVarDropdown(mode){
           fields: [
             { key: 'label', label: 'Label', value: k },
             { key: 'unit', label: 'Unit (optional)', value: '', placeholder: 'e.g. V, A, C' },
-            { key: 'decimals', label: 'Decimal places', type: 'number', value: '1' },
+            { key: 'decimals', label: 'Decimal places', type: 'number', step: '1', value: '1' },
           ],
         });
         if (!result) return;
@@ -1569,6 +1612,21 @@ socket.on('board_type_updated', (data) => {
       boardTypeSelect.value = boardTypeFromServer;
       console.log('[Board] Initialized to:', boardTypeFromServer);
     }
+  }
+})();
+
+// Pre-fill the default baud rate from admin settings (student can still change it before connecting)
+(function() {
+  const d = uiConfigFromServer && uiConfigFromServer.defaults;
+  if (!d || !d.serial_monitor_default_baud) return;
+  const baud = String(d.serial_monitor_default_baud);
+  const hasOption = Array.from(baudSelect.options).some(o => o.value === baud);
+  if (hasOption) {
+    baudSelect.value = baud;
+  } else {
+    baudSelect.value = 'custom';
+    customBaud.style.display = 'inline-block';
+    customBaud.value = baud;
   }
 })();
 

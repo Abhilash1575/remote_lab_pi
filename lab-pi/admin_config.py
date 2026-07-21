@@ -39,6 +39,8 @@ DEFAULT_UI_CONFIG = {
         'dynamic_controls_visible': True,
         'serial_monitor_auto_connect': False,
         'serial_monitor_allow_disconnect': True,
+        'serial_monitor_default_baud': 115200,
+        'serial_monitor_default_port': '',
     },
     'required_controls': [],
     'experiment_name': 'Remote Lab DESE',

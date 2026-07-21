@@ -804,11 +804,17 @@ def admin_settings():
         main_view = request.form.get('main_view')
         if main_view not in ('plotter', 'oscilloscope'):
             main_view = 'plotter'
+        try:
+            default_baud = int(request.form.get('serial_monitor_default_baud', 115200))
+        except (TypeError, ValueError):
+            default_baud = 115200
         new_defaults = {
             'main_view': main_view,
             'dynamic_controls_visible': request.form.get('dynamic_controls_visible') == 'on',
             'serial_monitor_auto_connect': request.form.get('serial_monitor_auto_connect') == 'on',
             'serial_monitor_allow_disconnect': request.form.get('serial_monitor_allow_disconnect') == 'on',
+            'serial_monitor_default_baud': default_baud,
+            'serial_monitor_default_port': (request.form.get('serial_monitor_default_port') or '').strip(),
         }
         experiment_name = (request.form.get('experiment_name') or '').strip()
         cfg = save_ui_config(new_controls, new_defaults, experiment_name=experiment_name)
@@ -854,13 +860,17 @@ def admin_add_required_control():
         control = {'type': rc_type, 'label': label}
         if rc_type == 'slider':
             try:
-                control['min'] = int(request.form.get('rc_min', 0))
+                control['min'] = float(request.form.get('rc_min', 0))
             except (TypeError, ValueError):
                 control['min'] = 0
             try:
-                control['max'] = int(request.form.get('rc_max', 1023))
+                control['max'] = float(request.form.get('rc_max', 1023))
             except (TypeError, ValueError):
                 control['max'] = 1023
+            try:
+                control['precision'] = max(0, min(2, int(request.form.get('rc_precision', 0))))
+            except (TypeError, ValueError):
+                control['precision'] = 0
             control['dataKey'] = label.lower().replace(' ', '_')
             control['cmdFormat'] = (request.form.get('rc_cmd_format') or '').strip() or '{value}'
         elif rc_type == 'button':

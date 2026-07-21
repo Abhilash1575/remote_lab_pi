@@ -99,6 +99,19 @@ button{padding:9px 16px;border-radius:6px;border:none;cursor:pointer;background:
             <span class="slider"></span>
           </label>
         </div>
+        <div class="row">
+          <label for="serial_monitor_default_baud">Default baud rate</label>
+          <select id="serial_monitor_default_baud" name="serial_monitor_default_baud" style="width:120px">
+            {% for b in [300, 1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200, 230400] %}
+            <option value="{{ b }}" {{ 'selected' if cfg.defaults.serial_monitor_default_baud == b }}>{{ b }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="row">
+          <label for="serial_monitor_default_port">Default port (optional)</label>
+          <input type="text" id="serial_monitor_default_port" name="serial_monitor_default_port" value="{{ cfg.defaults.serial_monitor_default_port }}" placeholder="e.g. /dev/ttyUSB0" style="width:160px">
+        </div>
+        <p class="note">Baud rate and port are pre-filled for students (and used for auto-connect) but not locked — students can still change them before connecting. If the default port isn't detected on this Pi, the first available port is used instead.</p>
         <p class="note">If auto-connect is on and disconnect is off, students get a connection they can't turn off. Auto-connect still works even if "Serial Monitor & Connect (whole section)" above is turned off — hiding the card doesn't stop the connection itself.</p>
       </div>
     </div>
@@ -111,7 +124,7 @@ button{padding:9px 16px;border-radius:6px;border:none;cursor:pointer;background:
     {% if cfg.required_controls %}
       {% for c in cfg.required_controls %}
       <div class="row">
-        <label>{{ c.label }} <span class="note">({{ c.type }}{{ ', ' + c.cmdFormat if c.type == 'slider' and c.cmdFormat }})</span></label>
+        <label>{{ c.label }} <span class="note">({{ c.type }}{{ ', ' + c.cmdFormat if c.type == 'slider' and c.cmdFormat }}{{ ', %s decimals' % c.precision if c.type == 'slider' and c.precision }})</span></label>
         <form method="post" action="{{ url_for('admin_delete_required_control') }}" style="margin:0">
           <input type="hidden" name="control_id" value="{{ c.id }}">
           <button type="submit" style="background:#ff6b6b;color:#101018;padding:5px 10px;">Remove</button>
@@ -136,8 +149,15 @@ button{padding:9px 16px;border-radius:6px;border:none;cursor:pointer;background:
         <input type="text" id="rc_label" name="rc_label" required>
       </div>
       <div id="rc_fields_slider" class="rc-fields">
-        <div class="row"><label for="rc_min">Min</label><input type="number" id="rc_min" name="rc_min" value="0" style="width:100px"></div>
-        <div class="row"><label for="rc_max">Max</label><input type="number" id="rc_max" name="rc_max" value="1023" style="width:100px"></div>
+        <div class="row"><label for="rc_min">Min</label><input type="number" step="any" id="rc_min" name="rc_min" value="0" style="width:100px"></div>
+        <div class="row"><label for="rc_max">Max</label><input type="number" step="any" id="rc_max" name="rc_max" value="1023" style="width:100px"></div>
+        <div class="row"><label for="rc_precision">Resolution</label>
+          <select id="rc_precision" name="rc_precision">
+            <option value="0">0 (whole numbers)</option>
+            <option value="1">0.0 (1 decimal)</option>
+            <option value="2">0.00 (2 decimals)</option>
+          </select>
+        </div>
         <div class="row"><label for="rc_cmd_format">Command format</label><input type="text" id="rc_cmd_format" name="rc_cmd_format" value="{value}" style="width:140px"></div>
         <p class="note">Use <code>{value}</code> as the placeholder, e.g. <code>{value}</code>, <code>I{value}</code>, or <code>{value}A</code>.</p>
       </div>
