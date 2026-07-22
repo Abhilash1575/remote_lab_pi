@@ -31,6 +31,7 @@ input[type=text].wide{width:100%;box-sizing:border-box}
 button{padding:9px 16px;border-radius:6px;border:none;cursor:pointer;background:#00f0ff;color:#041726;font-weight:700}
 .note{font-size:12px;color:#9aaab4;margin-top:4px}
 .banner{background:#2ecc7122;border:1px solid #2ecc71;color:#2ecc71;padding:8px 12px;border-radius:6px;font-size:13px}
+.banner.error{background:#ff6b6b22;border:1px solid #ff6b6b;color:#ff6b6b}
 .radio-group{display:flex;gap:16px}
 .radio-group label{display:flex;align-items:center;gap:6px;font-size:14px}
 </style>
@@ -45,6 +46,7 @@ button{padding:9px 16px;border-radius:6px;border:none;cursor:pointer;background:
 </div>
 <div class="wrap">
   {% if saved %}<div class="banner">Settings saved and pushed live to connected sessions.</div>{% endif %}
+  {% if port_error %}<div class="banner error">{{ port_error }}</div>{% endif %}
 
   <form id="settingsForm" method="post" action="{{ url_for('admin_settings') }}">
     <div class="card" style="margin-bottom:16px">
@@ -85,37 +87,66 @@ button{padding:9px 16px;border-radius:6px;border:none;cursor:pointer;background:
             <span class="slider"></span>
           </label>
         </div>
+        <p class="note">Per-port baud rate, auto-connect, and disconnect settings are configured per port below in "Serial Ports", not here — each port can behave differently. Baud rate is never locked; students can always change it before connecting, even on a port with a fixed device path.</p>
         <div class="row">
-          <label for="serial_monitor_auto_connect">Serial Monitor auto-connects when session loads</label>
+          <label for="serial_plotter_allow_port_switch">Students can switch the Serial Plotter's port</label>
           <label class="switch">
-            <input type="checkbox" id="serial_monitor_auto_connect" name="serial_monitor_auto_connect" {{ 'checked' if cfg.defaults.serial_monitor_auto_connect }} {{ 'disabled' if not cfg.controls.get('serial_connect', True) }}>
+            <input type="checkbox" id="serial_plotter_allow_port_switch" name="serial_plotter_allow_port_switch" {{ 'checked' if cfg.defaults.serial_plotter_allow_port_switch }}>
             <span class="slider"></span>
           </label>
         </div>
         <div class="row">
-          <label for="serial_monitor_allow_disconnect">Students can disconnect once connected</label>
-          <label class="switch">
-            <input type="checkbox" id="serial_monitor_allow_disconnect" name="serial_monitor_allow_disconnect" {{ 'checked' if cfg.defaults.serial_monitor_allow_disconnect }}>
-            <span class="slider"></span>
-          </label>
-        </div>
-        <div class="row">
-          <label for="serial_monitor_default_baud">Default baud rate</label>
-          <select id="serial_monitor_default_baud" name="serial_monitor_default_baud" style="width:120px">
-            {% for b in [300, 1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200, 230400] %}
-            <option value="{{ b }}" {{ 'selected' if cfg.defaults.serial_monitor_default_baud == b }}>{{ b }}</option>
+          <label for="serial_plotter_default_port_id">Default plotter port</label>
+          <select id="serial_plotter_default_port_id" name="serial_plotter_default_port_id" style="width:160px">
+            {% for p in cfg.serial_ports %}
+            <option value="{{ p.id }}" {{ 'selected' if cfg.defaults.serial_plotter_default_port_id == p.id }}>{{ p.label }}</option>
             {% endfor %}
           </select>
         </div>
-        <div class="row">
-          <label for="serial_monitor_default_port">Default port (optional)</label>
-          <input type="text" id="serial_monitor_default_port" name="serial_monitor_default_port" value="{{ cfg.defaults.serial_monitor_default_port }}" placeholder="e.g. /dev/ttyUSB0" style="width:160px">
-        </div>
-        <p class="note">Baud rate and port are pre-filled for students (and used for auto-connect) but not locked — students can still change them before connecting. If the default port isn't detected on this Pi, the first available port is used instead.</p>
-        <p class="note">If auto-connect is on and disconnect is off, students get a connection they can't turn off. Auto-connect still works even if "Serial Monitor & Connect (whole section)" above is turned off — hiding the card doesn't stop the connection itself.</p>
       </div>
     </div>
   </form>
+
+  <div class="card">
+    <h2>Serial Ports</h2>
+    <p class="sub">Define every MCU this Pi talks to — e.g. one port for a teacher-only readout board and another for the student-interactive board. Ports with "Student visible" off still connect and feed data in the background, but never show up in the student UI. Exactly one port should be the "Primary target" that slider/button commands are written to.</p>
+    <p class="sub">This does not include the Oscilloscope — that's a completely separate system with its own auto-detected port, own worker process, and own trigger/timebase controls on the Oscilloscope view. Students can never connect, disconnect, or repoint it through anything configured here, and a port entry that matches the scope's port is rejected.</p>
+
+    {% if cfg.serial_ports %}
+      {% for p in cfg.serial_ports %}
+      <div class="row">
+        <label>
+          <strong>{{ p.label }}</strong>
+          <span class="note">({{ p.port or 'student picks port' }} @ {{ p.baud }}{{ ', primary target' if p.is_primary_target }}{{ ', hidden from students' if not p.student_visible }}{{ ', auto-connects' if p.auto_connect }}{{ ', disconnect locked' if not p.allow_disconnect }})</span>
+        </label>
+        <form method="post" action="{{ url_for('admin_delete_serial_port') }}" style="margin:0">
+          <input type="hidden" name="port_id" value="{{ p.id }}">
+          <button type="submit" style="background:#ff6b6b;color:#101018;padding:5px 10px;">Remove</button>
+        </form>
+      </div>
+      {% endfor %}
+    {% else %}
+      <p class="note">None configured yet — the single legacy "Default port" above is used as one implicit port.</p>
+    {% endif %}
+
+    <form method="post" action="{{ url_for('admin_add_serial_port') }}" style="margin-top:14px;border-top:1px solid #3d3d5233;padding-top:14px">
+      <div class="row"><label for="sp_label">Label</label><input type="text" id="sp_label" name="sp_label" placeholder="e.g. Teacher MCU" required style="width:160px"></div>
+      <div class="row"><label for="sp_port">Port (blank = student picks)</label><input type="text" id="sp_port" name="sp_port" placeholder="e.g. /dev/ttyUSB0" style="width:160px"></div>
+      <div class="row"><label for="sp_baud">Baud</label>
+        <select id="sp_baud" name="sp_baud" style="width:120px">
+          {% for b in [300, 1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200, 230400] %}
+          <option value="{{ b }}" {{ 'selected' if b == 115200 }}>{{ b }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="row"><label for="sp_student_visible">Student visible</label><label class="switch"><input type="checkbox" id="sp_student_visible" name="sp_student_visible" checked><span class="slider"></span></label></div>
+      <div class="row"><label for="sp_auto_connect">Auto-connect</label><label class="switch"><input type="checkbox" id="sp_auto_connect" name="sp_auto_connect"><span class="slider"></span></label></div>
+      <div class="row"><label for="sp_allow_disconnect">Students can disconnect</label><label class="switch"><input type="checkbox" id="sp_allow_disconnect" name="sp_allow_disconnect" checked><span class="slider"></span></label></div>
+      <div class="row"><label for="sp_is_primary_target">Primary target (slider/button commands go here)</label><label class="switch"><input type="checkbox" id="sp_is_primary_target" name="sp_is_primary_target"><span class="slider"></span></label></div>
+      <p class="note">A port with a fixed path + Auto-connect on (and Student visible off) is the typical setup for a teacher-only readout board.</p>
+      <button type="submit" style="margin-top:10px">Add Port</button>
+    </form>
+  </div>
 
   <div class="card">
     <h2>Required Dynamic Controls</h2>
@@ -124,7 +155,7 @@ button{padding:9px 16px;border-radius:6px;border:none;cursor:pointer;background:
     {% if cfg.required_controls %}
       {% for c in cfg.required_controls %}
       <div class="row">
-        <label>{{ c.label }} <span class="note">({{ c.type }}{{ ', ' + c.cmdFormat if c.type == 'slider' and c.cmdFormat }}{{ ', %s decimals' % c.precision if c.type == 'slider' and c.precision }})</span></label>
+        <label>{{ c.label }} <span class="note">({{ c.type }}{{ ', ' + c.cmdFormat if c.type == 'slider' and c.cmdFormat }}{{ ', %s decimals' % c.precision if c.type == 'slider' and c.precision }}{% if c.type == 'readout' %}{% for p in cfg.serial_ports %}{% if p.id == c.portId %}, port: {{ p.label }}{% endif %}{% endfor %}{% if c.unit %}, unit: {{ c.unit }}{% endif %}{% endif %})</span></label>
         <form method="post" action="{{ url_for('admin_delete_required_control') }}" style="margin:0">
           <input type="hidden" name="control_id" value="{{ c.id }}">
           <button type="submit" style="background:#ff6b6b;color:#101018;padding:5px 10px;">Remove</button>
@@ -167,8 +198,17 @@ button{padding:9px 16px;border-radius:6px;border:none;cursor:pointer;background:
       </div>
       <div id="rc_fields_readout" class="rc-fields" style="display:none">
         <div class="row"><label for="rc_data_key">Data key</label><input type="text" id="rc_data_key" name="rc_data_key" placeholder="e.g. temperature" style="width:160px"></div>
-        <div class="row"><label for="rc_unit">Unit</label><input type="text" id="rc_unit" name="rc_unit" placeholder="e.g. C" style="width:100px"></div>
+        <div class="row"><label for="rc_port_id">Port</label>
+          <select id="rc_port_id" name="rc_port_id" style="width:160px">
+            <option value="">(any connected port)</option>
+            {% for p in cfg.serial_ports %}
+            <option value="{{ p.id }}">{{ p.label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="row"><label for="rc_unit">Unit (LaTeX, e.g. <code>^\circ\text{C}</code>)</label><input type="text" id="rc_unit" name="rc_unit" placeholder="e.g. ^\circ\text{C}" style="width:140px"></div>
         <div class="row"><label for="rc_decimals">Decimals</label><input type="number" id="rc_decimals" name="rc_decimals" value="1" style="width:80px"></div>
+        <p class="note">Which port this readout listens on. Leave as "(any connected port)" to match the first port sending that data key (legacy behavior).</p>
       </div>
       <button type="submit" style="margin-top:10px">Add Control</button>
     </form>

@@ -37,12 +37,15 @@ DEFAULT_UI_CONFIG = {
     'defaults': {
         'main_view': 'plotter',
         'dynamic_controls_visible': True,
-        'serial_monitor_auto_connect': False,
-        'serial_monitor_allow_disconnect': True,
-        'serial_monitor_default_baud': 115200,
-        'serial_monitor_default_port': '',
+        'serial_plotter_allow_port_switch': True,
+        'serial_plotter_default_port_id': '',
     },
     'required_controls': [],
+    # Each entry: {id, label, port, baud, student_visible, auto_connect,
+    # allow_disconnect, is_primary_target}. 'port' blank means the student
+    # picks from the live port dropdown; is_primary_target marks the one
+    # port that slider/button commands (send_command) are written to.
+    'serial_ports': [],
     'experiment_name': 'Remote Lab DESE',
     'updated_at': None,
 }
@@ -63,6 +66,8 @@ def load_ui_config(force_reload=False):
             cfg['defaults'].update(on_disk.get('defaults', {}))
             if 'required_controls' in on_disk:
                 cfg['required_controls'] = on_disk['required_controls']
+            if 'serial_ports' in on_disk:
+                cfg['serial_ports'] = on_disk['serial_ports']
             if on_disk.get('experiment_name'):
                 cfg['experiment_name'] = on_disk['experiment_name']
             cfg['updated_at'] = on_disk.get('updated_at')
@@ -82,10 +87,51 @@ def get_effective_ui_config():
         cfg['defaults']['main_view'] = 'oscilloscope' if controls.get('oscilloscope', True) else main_view
     elif main_view == 'oscilloscope' and not controls.get('oscilloscope', True):
         cfg['defaults']['main_view'] = 'plotter' if controls.get('serial_plotter', True) else main_view
+
+    # Zero-config installs (no serial ports configured yet) get one implicit
+    # profile with sane defaults — student picks the port, standard baud,
+    # doesn't auto-connect — so a fresh install behaves reasonably with
+    # nothing configured in the Serial Ports admin card yet.
+    if not cfg.get('serial_ports'):
+        cfg['serial_ports'] = [{
+            'id': 'default',
+            'label': 'Default',
+            'port': '',
+            'baud': 115200,
+            'student_visible': True,
+            'auto_connect': False,
+            'allow_disconnect': True,
+            'is_primary_target': True,
+        }]
+
+    # Exactly one profile should be the primary send_command target; if none
+    # (or more than one, from a bad edit) is marked, fall back to the first.
+    ports = cfg['serial_ports']
+    if ports and not any(p.get('is_primary_target') for p in ports):
+        ports[0]['is_primary_target'] = True
+
+    # Default plotter port must reference a currently-configured profile.
+    port_ids = [p['id'] for p in ports]
+    if cfg['defaults'].get('serial_plotter_default_port_id') not in port_ids:
+        cfg['defaults']['serial_plotter_default_port_id'] = port_ids[0] if port_ids else ''
+
     # serial_monitor_section only hides the card in the UI; serial_connect is the sole
-    # functional gate, so auto-connect still runs even when the section is hidden.
+    # functional gate, so no port should auto-connect once it's turned off.
     if not controls.get('serial_connect', True):
-        cfg['defaults']['serial_monitor_auto_connect'] = False
+        for p in ports:
+            p['auto_connect'] = False
+
+    return cfg
+
+
+def get_student_ui_config():
+    """get_effective_ui_config() with admin-only serial ports stripped out.
+    Use this (never get_effective_ui_config() directly) for anything a student's
+    browser receives — rendered templates and 'ui_config_updated' broadcasts —
+    since the full config's serial_ports includes hidden ports' labels/device
+    paths, which the whole point of 'student_visible' is to keep from students."""
+    cfg = get_effective_ui_config()
+    cfg['serial_ports'] = [p for p in cfg['serial_ports'] if p.get('student_visible', True)]
     return cfg
 
 
@@ -119,6 +165,33 @@ def add_required_control(control):
 def delete_required_control(control_id):
     cfg = load_ui_config()
     cfg['required_controls'] = [c for c in cfg.get('required_controls', []) if c.get('id') != control_id]
+    return _persist(cfg)
+
+
+def add_serial_port(profile):
+    cfg = load_ui_config()
+    profile = dict(profile)
+    profile['id'] = uuid.uuid4().hex[:10]
+    existing = cfg.setdefault('serial_ports', [])
+    # Exactly one profile can be the primary send_command target: the first
+    # profile ever added is primary by default; a later profile explicitly
+    # marked primary steals it from whichever profile currently holds it.
+    if not existing:
+        profile['is_primary_target'] = True
+    elif profile.get('is_primary_target'):
+        for p in existing:
+            p['is_primary_target'] = False
+    existing.append(profile)
+    _persist(cfg)
+    return profile
+
+
+def delete_serial_port(port_id):
+    cfg = load_ui_config()
+    remaining = [p for p in cfg.get('serial_ports', []) if p.get('id') != port_id]
+    if remaining and not any(p.get('is_primary_target') for p in remaining):
+        remaining[0]['is_primary_target'] = True
+    cfg['serial_ports'] = remaining
     return _persist(cfg)
 
 

@@ -99,10 +99,11 @@ detect_osc_port()
 from werkzeug.utils import secure_filename
 
 from admin_config import (
-    CONTROL_KEYS, get_effective_ui_config, load_ui_config, save_ui_config,
+    CONTROL_KEYS, get_effective_ui_config, get_student_ui_config, load_ui_config, save_ui_config,
     is_control_enabled, has_admin_password_configured, password_locked_by_env,
     set_admin_password, verify_admin_password, admin_required,
     add_required_control, delete_required_control,
+    add_serial_port, delete_serial_port,
 )
 
 # ---------- CONFIG ----------
@@ -120,11 +121,85 @@ socketio = SocketIO(app, async_mode='eventlet')
 
 # Global active sessions for authorization
 active_sessions = {}
-latest_sensor_data = {}  # Store latest sensor data for CRO page polling
+latest_sensor_data = {}  # conn_id -> latest parsed sensor dict, for CRO page polling
 
-serial_lock = threading.Lock()
-ser = None
-ser_stop = threading.Event()
+# ---------- MULTI-PORT SERIAL CONNECTIONS ----------
+# conn_id -> {'ser': serial.Serial, 'stop': threading.Event, 'port': str, 'baud': int}
+# conn_id is a serial-port profile id from admin_config's ui_config['serial_ports'].
+serial_connections = {}
+serial_connections_lock = threading.Lock()
+
+
+def _primary_conn_id():
+    """The serial-port profile that generic slider/button commands are sent to."""
+    for p in get_effective_ui_config().get('serial_ports', []):
+        if p.get('is_primary_target'):
+            return p['id']
+    return 'default'
+
+
+def _open_connection(conn_id, port, baud):
+    """(Re)open a serial connection for conn_id, replacing any existing one under the same id."""
+    if serial is None:
+        return False, 'pyserial not available on server'
+    # The Oscilloscope is a wholly separate, always-on system (its own worker,
+    # its own auto-detected port, its own settings) — students can never connect,
+    # disconnect, or reconfigure it through the Serial Monitor/Plotter, so no
+    # serial-port profile (however it got configured) may ever open its port.
+    if OSC_PORT and port == OSC_PORT:
+        return False, f'{port} is the Oscilloscope\'s port and cannot be used here'
+    with serial_connections_lock:
+        existing = serial_connections.pop(conn_id, None)
+        if existing:
+            try:
+                existing['stop'].set()
+                if existing['ser'] and existing['ser'].is_open:
+                    existing['ser'].close()
+            except Exception:
+                pass
+        try:
+            ser_obj = serial.Serial(port, baud, timeout=1)
+        except Exception as e:
+            return False, str(e)
+        stop_event = threading.Event()
+        serial_connections[conn_id] = {'ser': ser_obj, 'stop': stop_event, 'port': port, 'baud': baud}
+    eventlet.spawn(serial_reader_worker, conn_id, ser_obj, stop_event)
+    return True, None
+
+
+def _close_connection(conn_id):
+    with serial_connections_lock:
+        conn = serial_connections.pop(conn_id, None)
+    if not conn:
+        return
+    try:
+        conn['stop'].set()
+        if conn['ser'] and conn['ser'].is_open:
+            conn['ser'].close()
+    except Exception:
+        pass
+
+
+def sync_serial_profiles():
+    """Reconcile live connections with admin-configured serial port profiles:
+    open auto-connect profiles with a fixed port, close ones that were
+    deleted, disabled, or had auto-connect turned off. Call after any
+    admin settings save so changes take effect without a restart.
+    (_open_connection refuses the Oscilloscope's own port regardless.)"""
+    profiles = {p['id']: p for p in get_effective_ui_config().get('serial_ports', [])}
+    with serial_connections_lock:
+        current_ids = list(serial_connections.keys())
+    for conn_id in current_ids:
+        profile = profiles.get(conn_id)
+        if profile is None or not profile.get('auto_connect') or not profile.get('port'):
+            _close_connection(conn_id)
+    for conn_id, profile in profiles.items():
+        if not profile.get('auto_connect') or not profile.get('port'):
+            continue
+        with serial_connections_lock:
+            already_open = conn_id in serial_connections
+        if not already_open:
+            _open_connection(conn_id, profile['port'], int(profile.get('baud', 115200)))
 
 # ---------- MASTER PI HEARTBEAT CONFIGURATION ----------
 # Load from environment variables
@@ -558,7 +633,7 @@ def list_serial_ports():
 @app.route('/')
 def index():
     # Provide default values for session variables
-    return render_template('index.html', session_duration=0, session_end_time=0, board_type='arduino', ui_config=get_effective_ui_config())
+    return render_template('index.html', session_duration=0, session_end_time=0, board_type='arduino', ui_config=get_student_ui_config())
 
 @app.route('/experiment')
 def experiment():
@@ -626,7 +701,7 @@ def experiment():
     duration = active_sessions[session_key]['duration']
     session_end_time = int(active_sessions[session_key]['expires_at'] * 1000)  # JS milliseconds
     board_type = active_sessions[session_key].get('board_type', 'arduino')
-    return render_template('index.html', session_duration=duration, session_end_time=session_end_time, board_type=board_type, ui_config=get_effective_ui_config())
+    return render_template('index.html', session_duration=duration, session_end_time=session_end_time, board_type=board_type, ui_config=get_student_ui_config())
 
 @app.route('/add_session', methods=['POST'])
 def add_session():
@@ -804,27 +879,22 @@ def admin_settings():
         main_view = request.form.get('main_view')
         if main_view not in ('plotter', 'oscilloscope'):
             main_view = 'plotter'
-        try:
-            default_baud = int(request.form.get('serial_monitor_default_baud', 115200))
-        except (TypeError, ValueError):
-            default_baud = 115200
         new_defaults = {
             'main_view': main_view,
             'dynamic_controls_visible': request.form.get('dynamic_controls_visible') == 'on',
-            'serial_monitor_auto_connect': request.form.get('serial_monitor_auto_connect') == 'on',
-            'serial_monitor_allow_disconnect': request.form.get('serial_monitor_allow_disconnect') == 'on',
-            'serial_monitor_default_baud': default_baud,
-            'serial_monitor_default_port': (request.form.get('serial_monitor_default_port') or '').strip(),
+            'serial_plotter_allow_port_switch': request.form.get('serial_plotter_allow_port_switch') == 'on',
+            'serial_plotter_default_port_id': (request.form.get('serial_plotter_default_port_id') or '').strip(),
         }
         experiment_name = (request.form.get('experiment_name') or '').strip()
         cfg = save_ui_config(new_controls, new_defaults, experiment_name=experiment_name)
-        socketio.emit('ui_config_updated', get_effective_ui_config())
+        socketio.emit('ui_config_updated', get_student_ui_config())
+        sync_serial_profiles()
         saved = True
 
     cfg = get_effective_ui_config()
     return render_template(
         'admin_settings.html', cfg=cfg, control_keys=CONTROL_KEYS,
-        env_password_locked=password_locked_by_env(), saved=saved, password_error=None,
+        env_password_locked=password_locked_by_env(), saved=saved, password_error=None, port_error=None,
     )
 
 @app.route('/admin/settings/password', methods=['POST'])
@@ -848,7 +918,7 @@ def admin_change_password():
     cfg = get_effective_ui_config()
     return render_template(
         'admin_settings.html', cfg=cfg, control_keys=CONTROL_KEYS,
-        env_password_locked=password_locked_by_env(), saved=False, password_error=error,
+        env_password_locked=password_locked_by_env(), saved=False, password_error=error, port_error=None,
     )
 
 @app.route('/admin/settings/controls/add', methods=['POST'])
@@ -878,10 +948,12 @@ def admin_add_required_control():
             control['offCmd'] = request.form.get('rc_off_cmd', '0')
         elif rc_type == 'readout':
             control['dataKey'] = (request.form.get('rc_data_key') or label.lower().replace(' ', '_')).strip()
+            # 'unit' is a LaTeX source string (e.g. ^\circ\text{C}), rendered client-side with KaTeX.
             control['unit'] = request.form.get('rc_unit', '')
             control['decimals'] = request.form.get('rc_decimals', '')
+            control['portId'] = (request.form.get('rc_port_id') or '').strip()
         add_required_control(control)
-        socketio.emit('ui_config_updated', get_effective_ui_config())
+        socketio.emit('ui_config_updated', get_student_ui_config())
     return redirect(url_for('admin_settings'))
 
 @app.route('/admin/settings/controls/delete', methods=['POST'])
@@ -890,7 +962,51 @@ def admin_delete_required_control():
     control_id = request.form.get('control_id', '')
     if control_id:
         delete_required_control(control_id)
-        socketio.emit('ui_config_updated', get_effective_ui_config())
+        socketio.emit('ui_config_updated', get_student_ui_config())
+    return redirect(url_for('admin_settings'))
+
+@app.route('/admin/settings/ports/add', methods=['POST'])
+@admin_required
+def admin_add_serial_port():
+    label = (request.form.get('sp_label') or '').strip()
+    if label:
+        try:
+            baud = int(request.form.get('sp_baud', 115200))
+        except (TypeError, ValueError):
+            baud = 115200
+        port_value = (request.form.get('sp_port') or '').strip()
+        # The Oscilloscope owns its own auto-detected port and is never something
+        # students connect to or reconfigure via Serial Monitor/Plotter — reject
+        # any profile that would collide with it instead of silently failing later.
+        if port_value and OSC_PORT and port_value == OSC_PORT:
+            cfg = get_effective_ui_config()
+            return render_template(
+                'admin_settings.html', cfg=cfg, control_keys=CONTROL_KEYS,
+                env_password_locked=password_locked_by_env(), saved=False, password_error=None,
+                port_error=f'{port_value} is the Oscilloscope\'s port (auto-detected) and cannot be reused here.',
+            )
+        profile = {
+            'label': label,
+            'port': port_value,
+            'baud': baud,
+            'student_visible': request.form.get('sp_student_visible') == 'on',
+            'auto_connect': request.form.get('sp_auto_connect') == 'on',
+            'allow_disconnect': request.form.get('sp_allow_disconnect') == 'on',
+            'is_primary_target': request.form.get('sp_is_primary_target') == 'on',
+        }
+        add_serial_port(profile)
+        socketio.emit('ui_config_updated', get_student_ui_config())
+        sync_serial_profiles()
+    return redirect(url_for('admin_settings'))
+
+@app.route('/admin/settings/ports/delete', methods=['POST'])
+@admin_required
+def admin_delete_serial_port():
+    port_id = request.form.get('port_id', '')
+    if port_id:
+        delete_serial_port(port_id)
+        socketio.emit('ui_config_updated', get_student_ui_config())
+        sync_serial_profiles()
     return redirect(url_for('admin_settings'))
 
 @app.route('/test_gpio', methods=['GET'])
@@ -981,7 +1097,7 @@ def newchart():
     if session_key and session_key in active_sessions:
         board_type = active_sessions[session_key].get('board_type', 'arduino')
     
-    return render_template('newchart.html', board_type=board_type)
+    return render_template('newchart.html', board_type=board_type, ui_config=get_student_ui_config())
 
 @app.route('/oscilloscope')
 def oscilloscope():
@@ -1020,7 +1136,7 @@ def camera():
 
 @app.route('/homepage')
 def homepage():
-    return render_template('index.html', ui_config=get_effective_ui_config())
+    return render_template('index.html', ui_config=get_student_ui_config())
 
 @app.route('/ports')
 def ports_rest():
@@ -1390,9 +1506,9 @@ def handle_osc_auto_level():
 
 
 # ---------- SERIAL READER ----------
-def serial_reader_worker(serial_obj):
+def serial_reader_worker(conn_id, serial_obj, stop_event):
     try:
-        while not ser_stop.is_set():
+        while not stop_event.is_set():
             line = serial_obj.readline()
             if not line:
                 continue
@@ -1400,7 +1516,7 @@ def serial_reader_worker(serial_obj):
                 text = line.decode(errors='replace').strip()
             except:
                 text = str(line)
-            socketio.emit('feedback', text)
+            socketio.emit('feedback', {'conn_id': conn_id, 'text': text})
 
             # --- parse serial line into sensor_data for chart ---
             if any(sep in text for sep in [':', '=', '@', '>', '#', '^', '!', '$', '*', '%', '~', '\\', '|', '+', '-', ';', ',']) and any(c.isdigit() for c in text):
@@ -1426,11 +1542,10 @@ def serial_reader_worker(serial_obj):
                                 pass
                 # Keep original keys as sent by Arduino - no predefined mappings
                 if data:
-                    global latest_sensor_data
-                    latest_sensor_data = data
-                    socketio.start_background_task(send_sensor_data_to_clients, data)
+                    latest_sensor_data[conn_id] = data
+                    socketio.start_background_task(send_sensor_data_to_clients, conn_id, data)
     except Exception as e:
-        socketio.emit('feedback', f'[serial worker stopped] {e}')
+        socketio.emit('feedback', {'conn_id': conn_id, 'text': f'[serial worker stopped] {e}'})
 
 # ---------- SOCKET HANDLERS ----------
 @socketio.on('connect')
@@ -1438,7 +1553,13 @@ def on_connect():
     from flask import request
     print("[DEBUG] Client connected:", request.sid)
     emit('ports_list', list_serial_ports())
-    emit('feedback', 'Server: socket connected')
+    cfg = get_student_ui_config()
+    student_ports = cfg.get('serial_ports', [])
+    student_ids = {p['id'] for p in student_ports}
+    with serial_connections_lock:
+        active = {cid: {'port': c['port'], 'baud': c['baud']} for cid, c in serial_connections.items() if cid in student_ids}
+    emit('serial_ports_config', {'ports': student_ports, 'active': active})
+    emit('feedback', {'conn_id': None, 'text': 'Server: socket connected'})
 
 @socketio.on('list_ports')
 def handle_list_ports():
@@ -1446,77 +1567,69 @@ def handle_list_ports():
 
 @socketio.on('connect_serial')
 def handle_connect_serial(data):
-    global ser, ser_stop
+    data = data or {}
+    conn_id = data.get('conn_id') or 'default'
     # serial_monitor_section only hides the card in the UI; serial_connect is the sole
     # functional gate, so auto-connect (or a manual reconnect) still works when hidden.
     if not is_control_enabled('serial_connect'):
-        emit('serial_status', {'status': 'error', 'message': 'Serial Monitor connect is disabled for this session'})
+        emit('serial_status', {'status': 'error', 'message': 'Serial Monitor connect is disabled for this session', 'conn_id': conn_id})
         return
     port = data.get('port')
     baud = int(data.get('baud', 115200))
     if not port:
-        emit('serial_status', {'status': 'error', 'message': 'No port selected'})
+        emit('serial_status', {'status': 'error', 'message': 'No port selected', 'conn_id': conn_id})
         return
-    if serial is None:
-        emit('serial_status', {'status': 'error', 'message': 'pyserial not available on server'})
-        return
-    with serial_lock:
-        try:
-            if ser and ser.is_open:
-                ser.close()
-
-            ser = serial.Serial(port, baud, timeout=1)
-            ser_stop.clear()
-            # Use eventlet.spawn instead of threading.Thread
-            eventlet.spawn(serial_reader_worker, ser)
-            emit('serial_status', {'status': 'connected', 'port': port, 'baud': baud})
-        except Exception as e:
-            emit('serial_status', {'status': 'error', 'message': str(e)})
+    ok, err = _open_connection(conn_id, port, baud)
+    if ok:
+        emit('serial_status', {'status': 'connected', 'port': port, 'baud': baud, 'conn_id': conn_id})
+    else:
+        emit('serial_status', {'status': 'error', 'message': err, 'conn_id': conn_id})
 
 @socketio.on('disconnect_serial')
-def handle_disconnect_serial():
-    global ser, ser_stop
-    with serial_lock:
-        try:
-            ser_stop.set()
-            if ser and ser.is_open:
-                ser.close()
-            emit('serial_status', {'status': 'disconnected'})
-        except Exception as e:
-            emit('serial_status', {'status': 'error', 'message': str(e)})
+def handle_disconnect_serial(data=None):
+    conn_id = (data or {}).get('conn_id') or 'default'
+    _close_connection(conn_id)
+    emit('serial_status', {'status': 'disconnected', 'conn_id': conn_id})
 
 @socketio.on('send_command')
 def handle_send_command(data):
-    global ser
+    data = data or {}
+    conn_id = data.get('conn_id') or _primary_conn_id()
     cmd = data.get('cmd', '')
     out = cmd + ("\n" if not cmd.endswith("\n") else "")
+    with serial_connections_lock:
+        conn = serial_connections.get(conn_id)
     try:
-        with serial_lock:
-            if ser and ser.is_open:
-                ser.write(out.encode())
-                emit('feedback', f'SENT> {cmd}')
-            else:
-                emit('feedback', f'[no-serial] {cmd}')
+        if conn and conn['ser'] and conn['ser'].is_open:
+            conn['ser'].write(out.encode())
+            emit('feedback', {'conn_id': conn_id, 'text': f'SENT> {cmd}'})
+        else:
+            emit('feedback', {'conn_id': conn_id, 'text': f'[no-serial] {cmd}'})
     except Exception as e:
-        emit('feedback', f'[send error] {e}')
+        emit('feedback', {'conn_id': conn_id, 'text': f'[send error] {e}'})
 
 @socketio.on('waveform_config')
 def handle_waveform_config(cfg):
+    conn_id = _primary_conn_id()
     shape = cfg.get('shape'); freq = cfg.get('freq'); amp = cfg.get('amp')
     msg = f'WAVE {shape} FREQ {freq} AMP {amp}'
-    emit('feedback', f'[waveform] {msg}')
-    with serial_lock:
-        try:
-            if ser and ser.is_open:
-                ser.write((msg + "\n").encode())
-        except Exception as e:
-            emit('feedback', f'[waveform send error] {e}')
+    emit('feedback', {'conn_id': conn_id, 'text': f'[waveform] {msg}'})
+    with serial_connections_lock:
+        conn = serial_connections.get(conn_id)
+    try:
+        if conn and conn['ser'] and conn['ser'].is_open:
+            conn['ser'].write((msg + "\n").encode())
+    except Exception as e:
+        emit('feedback', {'conn_id': conn_id, 'text': f'[waveform send error] {e}'})
 
-def send_sensor_data_to_clients(data):
+def send_sensor_data_to_clients(conn_id, data):
     try:
         with app.app_context():
-            socketio.emit('sensor_data', data, namespace='/')
-            print("[DEBUG] Emitted to clients:", data)
+            with serial_connections_lock:
+                conn = serial_connections.get(conn_id)
+            port = conn['port'] if conn else None
+            socketio.emit('sensor_data', {'conn_id': conn_id, 'port': port, 'data': data}, namespace='/')
+            print("[DEBUG] Emitted to clients:", conn_id, data)
     except Exception as e:
         print("[ERROR] Failed to emit sensor_data:", e)
 
@@ -1547,7 +1660,11 @@ if __name__ == '__main__':
     
     # Start Oscilloscope worker
     eventlet.spawn(osc_worker)
-    
+
+    # Auto-connect any admin-configured serial port profiles
+    print("[Serial] Syncing admin-configured serial port profiles...")
+    sync_serial_profiles()
+
     audio_running = check_port(9000, "Audio server")
     if not audio_running:
         print("\n⚠️  Audio service not detected!")

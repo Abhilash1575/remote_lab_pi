@@ -7,6 +7,8 @@
 <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
+<link rel="stylesheet" href="{{ url_for('static', filename='vendor/katex/katex.min.css') }}">
+<script src="{{ url_for('static', filename='vendor/katex/katex.min.js') }}"></script>
 <style>
 /* (kept your original styles with small fixes) */
 html,body{height:100%;margin:0;font-family:'Inter',sans-serif;background:#1c1c2b;color:#e0e0e0;overflow:hidden}
@@ -25,7 +27,6 @@ button{padding:8px 10px;border-radius:6px;border:none;cursor:pointer}
 .danger{background:#ff6b6b;color:#101018;font-weight:700}
 #progressBar{height:10px;background:#222;border-radius:6px;overflow:hidden;border:1px solid #333}
 #progress{height:100%;width:0;background:linear-gradient(90deg,rgba(0,240,255,0.8),rgba(0,255,127,0.6));transition:width 0.25s}
-#feedbackList{font-family:'Roboto Mono',monospace;background:#000;color:#00ff7f;padding:8px;height:220px;overflow:auto;border:1px solid #00ff7f;white-space:pre-wrap}
 #dynamicControls{display:flex;flex-direction:column;gap:8px;max-height:420px;overflow-y:auto} /* limit height and allow vertical scroll */
 .control-row{display:flex;gap:8px;align-items:center}
 .control-row label{min-width:90px}
@@ -41,6 +42,12 @@ button{padding:8px 10px;border-radius:6px;border:none;cursor:pointer}
 .zoom-btn.expand{position:absolute;top:12px;right:140px}
 .label-muted{font-size:12px;color:#9aaab4;margin-left:6px}
 .readout-value{font-family:'Roboto Mono',monospace;font-size:16px;color:#00ff7f;background:#101018;padding:4px 8px;border-radius:4px;min-width:100px;text-align:right;}
+.readout-unit{color:#9aaab4;font-size:13px}
+.readout-unit .katex{color:#9aaab4}
+.serial-slot{border:1px solid #333;border-radius:8px;padding:10px;margin-bottom:10px}
+.serial-slot:last-child{margin-bottom:0}
+.serial-slot-label{font-weight:700;margin-bottom:6px;color:#00f0ff}
+.slot-feedback{font-family:'Roboto Mono',monospace;background:#000;color:#00ff7f;padding:8px;height:140px;overflow:auto;border:1px solid #00ff7f;white-space:pre-wrap;font-size:12px}
 /* dropdown styling */
 .var-dropdown{display:none;position:absolute;top:38px;left:0;background:#1e1e2f;border:1px solid #00f0ff55;border-radius:8px;box-shadow:0 0 10px rgba(0,255,255,0.3);z-index:10;min-width:140px;max-height:260px;overflow:auto}
 .var-dropdown .item{padding:8px 10px;cursor:pointer;border-bottom:1px solid #00f0ff22;color:#00f0ff}
@@ -118,27 +125,40 @@ button{padding:8px 10px;border-radius:6px;border:none;cursor:pointer}
 
     <div class="card" id="serialMonitorCard" style="{{ 'display:none' if not ui_config.controls.serial_monitor_section }}">
       <h3>Serial Monitor & Connect</h3>
-      <div style="display:flex;gap:8px;margin-bottom:8px">
-        <select id="baudSelect" class="small-input">
-          <option>300</option><option>1200</option><option>2400</option><option>4800</option><option>9600</option>
-          <option>19200</option><option>38400</option><option>57600</option><option selected>115200</option>
-          <option>230400</option><option>custom</option>
-        </select>
-        <input id="customBaud" class="small-input" placeholder="Custom" style="width:80px;display:none">
-        <select id="serialPort" class="small-input" style="width:140px"></select>
-        <button id="refreshPorts" style="background:#333;color:#fff;border-radius:6px;padding:6px 8px">Refresh</button>
+      {% for p in ui_config.serial_ports %}
+      {% if p.student_visible %}
+      <div class="serial-slot" data-conn-id="{{ p.id }}" data-fixed-port="{{ p.port }}" data-baud="{{ p.baud }}" data-allow-disconnect="{{ 'true' if p.allow_disconnect else 'false' }}" data-auto-connect="{{ 'true' if p.auto_connect else 'false' }}">
+        <div class="serial-slot-label">{{ p.label }}</div>
+        <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap">
+          {% if p.port %}
+          <span class="note" style="color:#9aaab4;font-size:13px;align-self:center">{{ p.port }}</span>
+          {% endif %}
+          {# Baud is always student-adjustable, even when the admin has fixed the port itself. #}
+          {% set standard_bauds = [300, 1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200, 230400] %}
+          <select class="slot-baud small-input">
+            {% for b in standard_bauds %}
+            <option {{ 'selected' if p.baud == b }}>{{ b }}</option>
+            {% endfor %}
+            <option {{ 'selected' if p.baud not in standard_bauds }}>custom</option>
+          </select>
+          <input class="slot-custom-baud small-input" placeholder="Custom" style="width:80px;{{ 'display:none' if p.baud in standard_bauds }}" value="{{ p.baud if p.baud not in standard_bauds else '' }}">
+          {% if not p.port %}
+          <select class="slot-port small-input" style="width:140px"></select>
+          <button class="slot-refresh" style="background:#333;color:#fff;border-radius:6px;padding:6px 8px">Refresh</button>
+          {% endif %}
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:8px">
+          <button class="slot-connect" style="background:#2ecc71;color:#fff" {{ 'disabled' if not ui_config.controls.serial_connect }}>Connect</button>
+          <button class="slot-clear" style="background:#333;color:#fff;border-radius:6px">Clear</button>
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:8px">
+          <input class="slot-cmd" placeholder="Type command and press Send" style="flex:1;padding:6px;border-radius:6px;border:none;background:#3d3d52;color:#00f0ff">
+          <button class="primary slot-send">Send</button>
+        </div>
+        <div class="slot-feedback">waiting for device...</div>
       </div>
-      <div style="display:flex;gap:8px;margin-bottom:8px">
-        <button id="connectBtn" style="background:#2ecc71;color:#fff" {{ 'disabled' if not ui_config.controls.serial_connect }}>Connect</button>
-        <button id="clearLog" style="background:#333;color:#fff;border-radius:6px">Clear</button>
-      </div>
-
-      <div style="display:flex;gap:8px;margin-bottom:8px">
-        <input id="cmdInput" placeholder="Type command and press Send" style="flex:1;padding:6px;border-radius:6px;border:none;background:#3d3d52;color:#00f0ff">
-        <button class="primary" id="sendBtn">Send</button>
-      </div>
-
-      <div id="feedbackList">waiting for device...</div>
+      {% endif %}
+      {% endfor %}
     </div>
 
     <div class="card" id="dynamicControlsCard" style="{{ 'display:none' if not ui_config.defaults.dynamic_controls_visible }}">
@@ -185,6 +205,14 @@ button{padding:8px 10px;border-radius:6px;border:none;cursor:pointer}
       <!-- Wrapper for Plotter-only controls -->
       <div id="mainPlotterControls">
         <div style="display:flex;gap:12px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
+          <label style="display:flex;gap:6px;align-items:center">Port
+            <select id="chartPortSelect" class="small-input" style="width:140px;margin-left:6px" {{ 'disabled' if not ui_config.defaults.serial_plotter_allow_port_switch }}>
+              {% for p in ui_config.serial_ports %}{% if p.student_visible %}
+              <option value="{{ p.id }}" {{ 'selected' if p.id == ui_config.defaults.serial_plotter_default_port_id }}>{{ p.label }}</option>
+              {% endif %}{% endfor %}
+            </select>
+          </label>
+
           <label style="display:flex;gap:6px;align-items:center">X-Axis
             <select id="xAxisFilter" class="small-input" style="width:140px;margin-left:6px">
               <option value="time">Time (s)</option><option value="samples">Samples</option>
@@ -467,16 +495,7 @@ const flashBtn = document.getElementById('flashBtn');
 const progressEl = document.getElementById('progress');
 const flashStatus = document.getElementById('flashStatus');
 const cancelFlash = document.getElementById('cancelFlash');
-const baudSelect = document.getElementById('baudSelect');
-const customBaud = document.getElementById('customBaud');
-const connectBtn = document.getElementById('connectBtn');
-const disconnectBtn = document.getElementById('disconnectBtn');
-const serialPortSelect = document.getElementById('serialPort');
-const refreshPorts = document.getElementById('refreshPorts');
-const feedbackList = document.getElementById('feedbackList');
-const sendBtn = document.getElementById('sendBtn');
-const cmdInput = document.getElementById('cmdInput');
-const clearLog = document.getElementById('clearLog');
+const chartPortSelect = document.getElementById('chartPortSelect');
 const dynamicControls = document.getElementById('dynamicControls');
 const addReadoutBtn = document.getElementById('addReadout');
 const addSliderBtn = document.getElementById('addSlider');
@@ -531,47 +550,141 @@ const yAxisFilter2 = document.getElementById('yAxisFilter2');
 
 const varDropdown = document.getElementById('varDropdown');
 
-let connectTimeoutHandle = null;
 let socketConnected = false;
 let sampleCount = 0; // alias for compatibility with new sensor_data handler
 let running = true;
 let lastSelectedKey1 = ''; // track last selected key to clear chart when changed
 
-/* ----------------- Helpers ----------------- */
-function feedbackAdd(line){
+/* ----------------- SERIAL MONITOR SLOTS (multi-port) ----------------- */
+// One slot per admin-configured, student-visible serial port profile. Each slot
+// tracks its own connection/UI state, keyed by conn_id (the profile's id).
+const serialSlots = {};
+
+function slotFeedbackAdd(slot, text){
   const prefix = (new Date()).toLocaleTimeString() + ' ';
-  feedbackList.innerText += prefix + line + '\n';
-  const lines = feedbackList.innerText.split('\n');
-  if(lines.length > 300) feedbackList.innerText = lines.slice(-300).join('\n');
-  feedbackList.scrollTop = feedbackList.scrollHeight;
+  slot.feedbackEl.innerText += prefix + text + '\n';
+  const lines = slot.feedbackEl.innerText.split('\n');
+  if(lines.length > 300) slot.feedbackEl.innerText = lines.slice(-300).join('\n');
+  slot.feedbackEl.scrollTop = slot.feedbackEl.scrollHeight;
+}
+
+function doSlotConnect(slot){
+  if (slot.connected) {
+    if (!slot.allowDisconnect) return; // disconnect locked by admin for this port
+    socket.emit('disconnect_serial', { conn_id: slot.connId });
+    slotFeedbackAdd(slot, 'Requested disconnect.');
+    return;
+  }
+  const port = slot.fixedPort || (slot.portSelect ? slot.portSelect.value : '') || '/dev/ttyUSB0';
+  // Baud is always student-adjustable, even on a port whose device path the admin fixed.
+  const baud = (slot.baudSelect.value === 'custom') ? parseInt(slot.customBaud.value || '115200') : parseInt(slot.baudSelect.value);
+  slot.connectBtn.disabled = true;
+  slot.connectBtn.textContent = 'Connecting...';
+  slotFeedbackAdd(slot, `Connecting to ${port}@${baud} ...`);
+  socket.emit('connect_serial', { conn_id: slot.connId, port, baud });
+  if (slot.connectTimeoutHandle) clearTimeout(slot.connectTimeoutHandle);
+  slot.connectTimeoutHandle = setTimeout(() => {
+    slotFeedbackAdd(slot, '⚠️ Serial connect timed out (no response).');
+    slot.connectBtn.disabled = false;
+    slot.connectBtn.textContent = 'Connect';
+  }, 6000);
+}
+
+// Auto-connect once on load for profiles where the student picks the port (blank
+// "port" in the admin config) but auto-connect is still on. Fixed-port profiles
+// with auto-connect are connected server-side instead (see sync_serial_profiles).
+function maybeAutoConnectSlot(slot){
+  if (slot.autoConnectAttempted || slot.connected) return;
+  if (!uiConfigFromServer.controls.serial_connect) return;
+  if (!slot.autoConnect) return;
+  if (!slot.portSelect || !slot.portSelect.value) return; // no port detected yet
+  slot.autoConnectAttempted = true;
+  doSlotConnect(slot);
+}
+
+function sendSlotCommand(slot){
+  const txt = slot.cmdInput.value.trim();
+  if (!txt) return;
+  socket.emit('send_command', { conn_id: slot.connId, cmd: txt });
+  slot.cmdInput.value = '';
+}
+
+function initSerialSlots(){
+  document.querySelectorAll('.serial-slot').forEach(el => {
+    const connId = el.dataset.connId;
+    const slot = {
+      el, connId,
+      fixedPort: el.dataset.fixedPort || '',
+      fixedBaud: parseInt(el.dataset.baud, 10) || 115200,
+      allowDisconnect: el.dataset.allowDisconnect === 'true',
+      autoConnect: el.dataset.autoConnect === 'true',
+      portSelect: el.querySelector('.slot-port'),
+      baudSelect: el.querySelector('.slot-baud'),
+      customBaud: el.querySelector('.slot-custom-baud'),
+      connectBtn: el.querySelector('.slot-connect'),
+      clearBtn: el.querySelector('.slot-clear'),
+      feedbackEl: el.querySelector('.slot-feedback'),
+      cmdInput: el.querySelector('.slot-cmd'),
+      sendBtn: el.querySelector('.slot-send'),
+      refreshBtn: el.querySelector('.slot-refresh'),
+      connected: false,
+      autoConnectAttempted: false,
+      connectTimeoutHandle: null,
+    };
+    serialSlots[connId] = slot;
+
+    if (slot.baudSelect) {
+      slot.baudSelect.addEventListener('change', () => {
+        slot.customBaud.style.display = slot.baudSelect.value === 'custom' ? 'inline-block' : 'none';
+      });
+    }
+    if (slot.refreshBtn) slot.refreshBtn.addEventListener('click', requestPorts);
+    slot.connectBtn.addEventListener('click', () => doSlotConnect(slot));
+    slot.clearBtn.addEventListener('click', () => { slot.feedbackEl.innerText = ''; });
+    slot.sendBtn.addEventListener('click', () => sendSlotCommand(slot));
+    slot.cmdInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); sendSlotCommand(slot); }
+    });
+  });
+}
+initSerialSlots();
+
+// The serial-port profile that generic slider/button commands (send_command
+// with no explicit conn_id) are written to server-side; used here to pick
+// which port firmware flashing targets.
+function getFlashPort(){
+  const primaryProfile = (uiConfigFromServer.serial_ports || []).find(p => p.is_primary_target);
+  const slot = primaryProfile && serialSlots[primaryProfile.id];
+  if (slot) return slot.fixedPort || (slot.portSelect ? slot.portSelect.value : '') || '';
+  const anySlot = Object.values(serialSlots)[0];
+  return anySlot ? (anySlot.fixedPort || (anySlot.portSelect ? anySlot.portSelect.value : '')) : '';
 }
 
 /* ----------------- PORTS (auto-detect) ----------------- */
 function requestPorts(){
   socket.emit('list_ports');
 }
-refreshPorts.addEventListener('click', requestPorts);
 socket.on('ports_list', (ports) => {
-  serialPortSelect.innerHTML = '';
-  if(!ports || ports.length===0){
-    const opt = document.createElement('option'); opt.value=''; opt.innerText = '(none)';
-    serialPortSelect.appendChild(opt);
-    return;
-  }
-  ports.forEach(p => {
-    const opt = document.createElement('option'); opt.value = p; opt.innerText = p;
-    serialPortSelect.appendChild(opt);
-  });
-  // Pre-select the admin's default port, if it's actually detected on this Pi.
-  // Falls back to the browser's natural first-option selection otherwise.
-  if (typeof serialConnected !== 'undefined' && !serialConnected) {
-    const d = uiConfigFromServer && uiConfigFromServer.defaults;
-    const defaultPort = d && d.serial_monitor_default_port;
-    if (defaultPort && ports && ports.includes(defaultPort)) {
-      serialPortSelect.value = defaultPort;
+  Object.values(serialSlots).forEach(slot => {
+    if (slot.fixedPort || !slot.portSelect) return; // fixed-port profiles don't need a dropdown
+    const previous = slot.portSelect.value;
+    slot.portSelect.innerHTML = '';
+    if (!ports || ports.length === 0) {
+      const opt = document.createElement('option'); opt.value=''; opt.innerText = '(none)';
+      slot.portSelect.appendChild(opt);
+      return;
     }
-  }
-  maybeAutoConnect();
+    ports.forEach(p => {
+      const opt = document.createElement('option'); opt.value = p; opt.innerText = p;
+      slot.portSelect.appendChild(opt);
+    });
+    // Keep whatever the student had selected, if it's still available; otherwise
+    // falls back to the browser's natural first-option selection.
+    if (!slot.connected && previous && ports.includes(previous)) {
+      slot.portSelect.value = previous;
+    }
+    maybeAutoConnectSlot(slot);
+  });
 });
 requestPorts();
 
@@ -581,7 +694,7 @@ if(flashBtn) {
     const file = document.getElementById('firmwareInput').files[0];
     if(!file){ alert('Select a firmware file'); return; }
     const board = boardType.value;
-    const port = serialPortSelect.value || '';
+    const port = getFlashPort();
     flashBtn.disabled = true; cancelFlash.disabled = false;
     flashStatus.innerText='Uploading firmware...';
     progressEl.style.width = '4%';
@@ -645,197 +758,48 @@ viewSopBtn.addEventListener('click', () => {
   window.open('/sop/exp.pdf', '_blank');
 });
 
-/* ----------------- SERIAL CONNECT / MONITOR ----------------- */
-baudSelect.addEventListener('change', () => {
-  if(baudSelect.value === 'custom') customBaud.style.display = 'inline-block';
-  else customBaud.style.display = 'none';
-});
-
-let serialConnected = false;
-let autoConnectAttempted = false;
-
-function doConnect() {
-  if (serialConnected) {
-    const allow = !currentUiConfig || !currentUiConfig.defaults || currentUiConfig.defaults.serial_monitor_allow_disconnect !== false;
-    if (!allow) return; // disconnect locked by admin
-    socket.emit('disconnect_serial');
-    feedbackAdd('Requested disconnect.');
-    return;
-  }
-
-  const port = serialPortSelect.value || '/dev/ttyUSB0';
-  const baud = (baudSelect.value==='custom') ? parseInt(customBaud.value||'115200') : parseInt(baudSelect.value);
-  connectBtn.disabled = true;
-  connectBtn.textContent = 'Connecting...';
-  feedbackAdd(`Connecting to ${port}@${baud} ...`);
-  socket.emit('connect_serial', { port, baud });
-  if(connectTimeoutHandle) clearTimeout(connectTimeoutHandle);
-  connectTimeoutHandle = setTimeout(() => {
-    feedbackAdd('⚠️ Serial connect timed out (no response).');
-    connectBtn.disabled = false;
-    connectBtn.textContent = 'Connect';
-  }, 6000);
-}
-connectBtn.addEventListener('click', doConnect);
-
-// Auto-connect once on load, if the admin has configured it as the default
-function maybeAutoConnect() {
-  if (autoConnectAttempted || serialConnected) return;
-  const d = uiConfigFromServer && uiConfigFromServer.defaults;
-  const c = uiConfigFromServer && uiConfigFromServer.controls;
-  if (!d || !c || !d.serial_monitor_auto_connect) return;
-  if (!c.serial_connect) return; // section visibility doesn't gate the actual connection
-  if (!serialPortSelect.value) return; // no port detected yet
-  autoConnectAttempted = true;
-  doConnect();
-}
-
-sendBtn.addEventListener('click', () => {
-  const txt = cmdInput.value.trim(); if(!txt) return;
-  socket.emit('send_command', { cmd: txt });
-  cmdInput.value = '';
-});
-
-cmdInput.addEventListener('keydown', (e) => {
-  if(e.key === 'Enter'){
-    e.preventDefault();
-    sendBtn.click();
-  }
-});
-clearLog.addEventListener('click', () => { feedbackList.innerText=''; });
-
+/* ----------------- SERIAL CONNECT / MONITOR (per-slot status) ----------------- */
 socket.on('serial_status', (info) => {
-  if(connectTimeoutHandle){ clearTimeout(connectTimeoutHandle); connectTimeoutHandle = null; }
-  if(info && info.status === 'connected'){
-    serialConnected = true;
-    const allowDisconnect = !currentUiConfig || !currentUiConfig.defaults || currentUiConfig.defaults.serial_monitor_allow_disconnect !== false;
-    connectBtn.disabled = !allowDisconnect;
-    connectBtn.textContent = allowDisconnect ? 'Disconnect' : 'Connected';
-    connectBtn.title = allowDisconnect ? '' : 'Disconnect locked by lab administrator';
-    connectBtn.style.background = '#ff6b6b';
-    connectBtn.style.color = '#fff';
-    feedbackAdd(`✅ Connected: ${info.port}@${info.baud}`);
-    requestPorts(); // refresh port list again
-    socket.emit('list_ports'); // optional redundant safety
+  if (!info) return;
+  const slot = serialSlots[info.conn_id || 'default'];
+  if (!slot) return;
+  if (slot.connectTimeoutHandle) { clearTimeout(slot.connectTimeoutHandle); slot.connectTimeoutHandle = null; }
+  if (info.status === 'connected') {
+    slot.connected = true;
+    slot.connectBtn.disabled = !slot.allowDisconnect;
+    slot.connectBtn.textContent = slot.allowDisconnect ? 'Disconnect' : 'Connected';
+    slot.connectBtn.title = slot.allowDisconnect ? '' : 'Disconnect locked by lab administrator';
+    slot.connectBtn.style.background = '#ff6b6b';
+    slot.connectBtn.style.color = '#fff';
+    slotFeedbackAdd(slot, `✅ Connected: ${info.port}@${info.baud}`);
+    requestPorts(); // refresh port lists again (other slots may need updating)
     updateYAxisFilterOptions([]); // prepare Y-axis dropdowns for dynamic data
-
-  } else if(info && info.status === 'error'){
-    serialConnected = false;
-    connectBtn.disabled = false;
-    connectBtn.textContent = 'Connect';
-    connectBtn.style.background = '#2ecc71';
-    connectBtn.style.color = '#fff';
-    feedbackAdd(`🔴 Serial error: ${info.message || ''}`);
+  } else if (info.status === 'error') {
+    slot.connected = false;
+    slot.connectBtn.disabled = false;
+    slot.connectBtn.textContent = 'Connect';
+    slot.connectBtn.style.background = '#2ecc71';
+    slot.connectBtn.style.color = '#fff';
+    slotFeedbackAdd(slot, `🔴 Serial error: ${info.message || ''}`);
   } else {
-    serialConnected = false;
-    connectBtn.disabled = false;
-    connectBtn.textContent = 'Connect';
-    connectBtn.style.background = '#2ecc71';
-    connectBtn.style.color = '#fff';
-    feedbackAdd(`🔴 Disconnected`);
+    slot.connected = false;
+    slot.connectBtn.disabled = false;
+    slot.connectBtn.textContent = 'Connect';
+    slot.connectBtn.style.background = '#2ecc71';
+    slot.connectBtn.style.color = '#fff';
+    slotFeedbackAdd(slot, `🔴 Disconnected`);
   }
 });
 
-/* handle raw feedback lines (we parse many formats here) */
-function parseLineToMap(line){
-  // Flexible parsing for various key-value formats
-  // Accepts separators: ',', ';', and within pairs: ':', '=', '>', '<', ' ', '&', '|', etc.
-  // Handles multiple pairs per line, even without commas
-  // Also handles single pair per line
-  // NEW: Also handles CSV header format like "temperature,humidity,voltage,current"
-  const out = {};
-  if(!line || typeof line !== 'string') return out;
-  
-  // Remove timestamps (common when prefs append "15:22:33 " etc) by dropping leading time if it's like HH:MM:SS
-  const trimmed = line.trim().replace(/^\d{1,2}:\d{2}:\d{2}\s*/, '');
-  
-  // Check if this is a CSV header line (comma-separated names without numeric values)
-  // Format: "temperature,humidity,voltage,current" (no numbers in the line)
-  const hasNumber = /\d/.test(trimmed);
-  const parts = trimmed.split(/[,;]/);
-  
-  // If line contains only letters, underscores, and commas (no numbers),
-  // treat it as a header line and store the variable names
-  if (!hasNumber && parts.length > 1) {
-    // Check if all parts are valid variable names (letters, numbers, underscores)
-    const allValidNames = parts.every(p => /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(p.trim()));
-    if (allValidNames) {
-      // Store header names for later use when data comes
-      window.lastDetectedHeaders = parts.map(p => p.trim().toLowerCase());
-      console.log('[Serial] Detected headers:', window.lastDetectedHeaders);
-      return out; // Return empty, headers will be used when data arrives
-    }
-  }
-  
-  // If we have previous headers and this line has numbers, map values to headers
-  if (window.lastDetectedHeaders && window.lastDetectedHeaders.length > 0) {
-    const values = trimmed.split(/[,;\s]+/).filter(v => v.trim());
-    if (values.length > 0) {
-      window.lastDetectedHeaders.forEach((header, index) => {
-        if (index < values.length) {
-          const num = Number(values[index]);
-          if (!isNaN(num)) {
-            out[header] = num;
-          }
-        }
-      });
-      // If we successfully parsed with headers, return the result
-      if (Object.keys(out).length > 0) {
-        return out;
-      }
-    }
-  }
-  
-  // Original parsing logic for key-value formats
-  // First, split on comma or semicolon to get potential pair groups
-  const pairGroups = trimmed.split(/[,;]/);
-  pairGroups.forEach(group => {
-    if(!group.trim()) return;
-    // Normalize separators within the group to spaces
-    const normalized = group.replace(/[:=>@#>^!$*~\\|+%-\s&|]+/g, ' ').trim();
-    // Split into tokens
-    const tokens = normalized.split(/\s+/);
-    // Pair every two tokens as key value
-    for(let i = 0; i < tokens.length; i += 2){
-      if(i + 1 < tokens.length){
-        const k = tokens[i].trim().toLowerCase();
-        const rawv = tokens[i + 1].trim();
-        // Try to parse value
-        const num = Number(rawv);
-        if(!isNaN(num)) out[k] = num;
-        else {
-          // try boolean like 0/1 or 'on'/'off'
-          if(rawv === '1' || rawv.toLowerCase() === 'on' || rawv.toLowerCase() === 'true') out[k] = 1;
-          else if(rawv === '0' || rawv.toLowerCase() === 'off' || rawv.toLowerCase() === 'false') out[k] = 0;
-          else {
-            // not numeric - store raw string
-            out[k] = rawv;
-          }
-        }
-      }
-    }
-  });
-  return out;
-}
-
-socket.on('feedback', (line) => {
-  if(line === undefined || line === null) return;
-  const text = String(line);
-  feedbackAdd(text);
-
-  // If this feedback line contains key/value pairs, parse and feed into sensor_data handler
-  try {
-    // quick check for presence of separators and at least one digit
-    if((text.includes(':') || text.includes('=') || text.includes('@') || text.includes('|') || text.includes(';') || text.includes(',')) && /\d/.test(text)){
-      const parsed = parseLineToMap(text);
-      // Only emit if parsed contains at least one numeric value
-      const hasNumeric = Object.values(parsed).some(v => typeof v === 'number' && !isNaN(v));
-      if(Object.keys(parsed).length > 0 && hasNumeric){
-        // update known keys on client side and also call sensor_data handler directly
-        socket.emit('sensor_data', parsed); // We call the same event name the server uses - processed client-side too
-      }
-    }
-  } catch(e){ /* ignore parse errors */ }
+/* Server-side serial_reader_worker already parses key/value lines into sensor_data
+   per connection, so the client just routes each raw feedback line to its slot's log. */
+socket.on('feedback', (payload) => {
+  if (payload === undefined || payload === null) return;
+  if (typeof payload === 'string') { console.log('[feedback]', payload); return; } // defensive, legacy shape
+  const { conn_id, text } = payload;
+  if (conn_id === null || conn_id === undefined) { console.log('[server]', text); return; }
+  const slot = serialSlots[conn_id];
+  if (slot) slotFeedbackAdd(slot, text);
 });
 
 /* ----------------- DYNAMIC CONTROLS (auto variable choices) ----------------- */
@@ -925,6 +889,20 @@ function showControlDialog(opts) {
     const first = Object.values(inputs)[0];
     if (first) { first.focus(); if (first.select) first.select(); }
   });
+}
+
+/* Renders a readout's unit as LaTeX (e.g. admin types ^\circ\text{C}) via the
+   locally-vendored KaTeX; falls back to plain text if KaTeX isn't loaded or the
+   source doesn't parse (e.g. a plain "V" or "A" typed without LaTeX syntax). */
+function renderUnitLatex(el, unitSource){
+  if (!unitSource) { el.innerHTML = ''; return; }
+  if (window.katex) {
+    try {
+      window.katex.render(unitSource, el, { throwOnError: false });
+      return;
+    } catch (e) { /* fall through to plain text */ }
+  }
+  el.innerText = unitSource;
 }
 
 function createControlElement(cfg){
@@ -1032,9 +1010,15 @@ else if(cfg.type === 'button'){
     valSpan.setAttribute('data-key', cfg.dataKey || '');
     valSpan.setAttribute('data-unit', cfg.unit || '');
     valSpan.setAttribute('data-decimals', cfg.decimals || '');
+    valSpan.setAttribute('data-port-id', cfg.portId || '');
     valSpan.innerText='--';
-    
+
+    const unitSpan = document.createElement('span');
+    unitSpan.className = 'readout-unit';
+    renderUnitLatex(unitSpan, cfg.unit || '');
+
     content.appendChild(valSpan);
+    content.appendChild(unitSpan);
   }
 
   wrapper.appendChild(content);
@@ -1162,7 +1146,8 @@ function saveLayoutToStorage() {
       seen.add(uniqKey);
       const unit = r.querySelector('.readout-value').getAttribute('data-unit') || '';
       const decimals = r.querySelector('.readout-value').getAttribute('data-decimals') || '';
-      arr.push({type:'readout', label: label, dataKey: key, unit: unit, decimals: decimals});
+      const portId = r.querySelector('.readout-value').getAttribute('data-port-id') || '';
+      arr.push({type:'readout', label: label, dataKey: key, unit: unit, decimals: decimals, portId: portId});
     }
   });
   // Save with session key prefix
@@ -1220,11 +1205,11 @@ function clearLayoutOnSessionEnd() {
 
 // Handle page close/refresh - disconnect serial and turn off relay
 window.addEventListener('beforeunload', (e) => {
-  // Try to disconnect serial
+  // Try to disconnect every serial slot
   try {
-    socket.emit('disconnect_serial');
+    Object.keys(serialSlots).forEach(connId => socket.emit('disconnect_serial', { conn_id: connId }));
   } catch(e) {}
-  
+
   // Turn off relay
   fetch('/toggle_relay', {
     method: 'POST',
@@ -1351,8 +1336,40 @@ function updateYAxisFilterOptions(currentKeys){
 }
 
 /* ----------------- SENSOR DATA handling ----------------- */
-socket.on('sensor_data', (payload) => {
-  if (!payload) return;
+// Server now tags every emission with the originating conn_id: { conn_id, port, data }.
+socket.on('sensor_data', (msg) => {
+  if (!msg) return;
+  const conn_id = msg.conn_id;
+  const payload = (msg.data && typeof msg.data === 'object') ? msg.data : msg; // tolerate a legacy flat payload
+
+  // Update readouts bound to this port (or unbound "any port" readouts) regardless of
+  // which port the plotter is currently showing — e.g. a teacher-only readout keeps
+  // updating even while the student is plotting the other board.
+  document.querySelectorAll('.readout-value').forEach(readout => {
+    const boundPort = readout.getAttribute('data-port-id');
+    if (boundPort && conn_id && boundPort !== conn_id) return; // this message isn't for this readout's port
+
+    const dataKey = readout.getAttribute('data-key');
+    if (!dataKey) {
+      readout.innerText = '--';
+      return;
+    }
+    let rawV = payload[dataKey];
+    if (rawV === undefined) rawV = payload[dataKey.toLowerCase()];
+    if (rawV === undefined) rawV = payload[dataKey.toUpperCase()];
+    if (rawV !== undefined && !isNaN(Number(rawV))) {
+      const value = Number(rawV);
+      const decimals = parseInt(readout.getAttribute('data-decimals')) || 2;
+      readout.innerText = value.toFixed(decimals);
+    } else {
+      readout.innerText = '--';
+    }
+  });
+
+  // Everything below feeds the chart/plotter, which only shows one port at a time.
+  const selectedPort = chartPortSelect ? chartPortSelect.value : '';
+  if (selectedPort && conn_id && selectedPort !== conn_id) return;
+
   sampleCount++;
 
   // Auto-load saved layout after first sensor data arrives
@@ -1394,15 +1411,15 @@ socket.on('sensor_data', (payload) => {
   // Get values for selected axes with spike filtering
   const key1 = yAxisFilter1.value;
   const key2 = yAxisFilter2.value;
-  
+
   // Get last values from buffer for spike detection
   const lastEntry = chartBuffer[chartBuffer.length - 1];
   const lastVal1 = lastEntry ? lastEntry.value1 : null;
   const lastVal2 = lastEntry ? lastEntry.value2 : null;
-  
+
   // Max allowed spike ratio (10x - anything larger is likely a glitch)
   const MAX_SPIKE_RATIO = 10;
-  
+
   // Helper to filter spikes
   function filterSpike(newVal, lastVal) {
     if (newVal === null || newVal === undefined) return null;
@@ -1417,12 +1434,12 @@ socket.on('sensor_data', (payload) => {
     console.log('[chart] Filtered spike:', newVal, 'last:', lastVal);
     return lastVal;
   }
-  
+
   const rawVal1 = key1 && payload[key1] !== undefined ? Number(payload[key1]) :
                key1 && payload[key1.toLowerCase()] !== undefined ? Number(payload[key1.toLowerCase()]) : null;
   const rawVal2 = key2 && payload[key2] !== undefined ? Number(payload[key2]) :
                key2 && payload[key2.toLowerCase()] !== undefined ? Number(payload[key2.toLowerCase()]) : null;
-  
+
   const val1 = filterSpike(rawVal1, lastVal1);
   const val2 = filterSpike(rawVal2, lastVal2);
 
@@ -1435,34 +1452,17 @@ socket.on('sensor_data', (payload) => {
       value2: val2
     });
   }
-
-  // Update readouts efficiently
-  document.querySelectorAll('.readout-value').forEach(readout => {
-    const dataKey = readout.getAttribute('data-key');
-    if (!dataKey) {
-      readout.innerText = '--';
-      return;
-    }
-
-    // Try exact match first, then lowercase
-    let rawV = payload[dataKey];
-    if (rawV === undefined) {
-      rawV = payload[dataKey.toLowerCase()];
-    }
-    // Also try uppercase
-    if (rawV === undefined) {
-      rawV = payload[dataKey.toUpperCase()];
-    }
-
-    if(rawV !== undefined && !isNaN(Number(rawV))){
-      const value = Number(rawV);
-      const decimals = parseInt(readout.getAttribute('data-decimals')) || 2;
-      readout.innerText = value.toFixed(decimals);
-    } else {
-      readout.innerText = '--';
-    }
-  });
 });
+
+// Switching the plotter's port: drop stale keys/data from the previous port.
+if (chartPortSelect) {
+  chartPortSelect.addEventListener('change', () => {
+    chartBuffer.length = 0;
+    yAxisFilter1.value = '';
+    yAxisFilter2.value = '';
+    updateYAxisFilterOptions([]);
+  });
+}
 
 /* ----------------- fallback helper: convert snake/case and manage dropdowns ----------------- */
 function normalizeKey(k){ return String(k).trim().toLowerCase(); }
@@ -1533,14 +1533,16 @@ function showVarDropdown(mode){
           submitLabel: 'Add Readout',
           fields: [
             { key: 'label', label: 'Label', value: k },
-            { key: 'unit', label: 'Unit (optional)', value: '', placeholder: 'e.g. V, A, C' },
+            { key: 'unit', label: 'Unit (optional, LaTeX)', value: '', placeholder: 'e.g. V, A, ^\\circ\\text{C}' },
             { key: 'decimals', label: 'Decimal places', type: 'number', step: '1', value: '1' },
           ],
         });
         if (!result) return;
         const label = (result.label || k).trim() || k;
         const decimals = parseInt(result.decimals);
-        createControlElement({ type:'readout', label, dataKey: k, unit: result.unit || '', decimals: isNaN(decimals) ? 1 : decimals });
+        // Bind to whichever port is currently plotted, so the readout tracks the same board.
+        const portId = chartPortSelect ? chartPortSelect.value : '';
+        createControlElement({ type:'readout', label, dataKey: k, unit: result.unit || '', decimals: isNaN(decimals) ? 1 : decimals, portId });
         saveLayoutToStorage();
         hideVarDropdown();
       };
@@ -1554,11 +1556,6 @@ document.addEventListener('click', (e) => {
   if(!e.target.closest('#addReadout') && !e.target.closest('#varDropdown')) {
     hideVarDropdown();
   }
-});
-
-/* ----------------- fallback: parse feedback into sensor_data when server doesn't emit sensor_data */
-socket.on('feedback', (line) => {
-  // handled above — this second listener remains compatible; nothing to add here.
 });
 
 // Waveform config removed as per user request
@@ -1615,21 +1612,6 @@ socket.on('board_type_updated', (data) => {
   }
 })();
 
-// Pre-fill the default baud rate from admin settings (student can still change it before connecting)
-(function() {
-  const d = uiConfigFromServer && uiConfigFromServer.defaults;
-  if (!d || !d.serial_monitor_default_baud) return;
-  const baud = String(d.serial_monitor_default_baud);
-  const hasOption = Array.from(baudSelect.options).some(o => o.value === baud);
-  if (hasOption) {
-    baudSelect.value = baud;
-  } else {
-    baudSelect.value = 'custom';
-    customBaud.style.display = 'inline-block';
-    customBaud.value = baud;
-  }
-})();
-
 /* ----------------- Admin-configured UI controls ----------------- */
 function applyUiConfig(cfg) {
   if (!cfg) return;
@@ -1644,7 +1626,7 @@ function applyUiConfig(cfg) {
   setDisabled(document.getElementById('boardType'), !controls.board_select);
   setDisabled(document.getElementById('flashBtn'), !controls.flash_firmware);
   setDisabled(document.getElementById('firmwareInput'), !controls.flash_firmware);
-  setDisabled(document.getElementById('connectBtn'), !controls.serial_connect);
+  document.querySelectorAll('.slot-connect').forEach(btn => setDisabled(btn, !controls.serial_connect));
   setDisabled(document.getElementById('factoryResetBtn'), !controls.factory_reset);
   setDisabled(document.getElementById('powerSupplyBtn'), !controls.power_supply);
   setDisabled(document.getElementById('addSlider'), !controls.student_controls_addition);
@@ -1680,14 +1662,6 @@ function applyUiConfig(cfg) {
 
   const dcCard = document.getElementById('dynamicControlsCard');
   if (dcCard && cfg.defaults) dcCard.style.display = cfg.defaults.dynamic_controls_visible ? '' : 'none';
-
-  // If already connected, an admin flipping "allow disconnect" off/on takes effect immediately,
-  // overriding the generic serial_connect disable above (which only governs starting a connection).
-  if (typeof serialConnected !== 'undefined' && serialConnected && controls.serial_connect) {
-    const allowDisconnect = !cfg.defaults || cfg.defaults.serial_monitor_allow_disconnect !== false;
-    connectBtn.disabled = !allowDisconnect;
-    connectBtn.title = allowDisconnect ? '' : 'Disconnect locked by lab administrator';
-  }
 
   renderRequiredControls(cfg.required_controls || []);
 }

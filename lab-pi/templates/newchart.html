@@ -43,6 +43,14 @@ html, body { height: 100%; margin: 0; font-family: 'Inter', sans-serif; backgrou
     
     <div id="plotterControls" style="display:flex; flex-direction:row; gap:12px; align-items:center;">
       <div class="control-group">
+        <label>Port</label>
+        <select id="portSelect" class="osc-select" {{ 'disabled' if not ui_config.defaults.serial_plotter_allow_port_switch }}>
+          {% for p in ui_config.serial_ports %}{% if p.student_visible %}
+          <option value="{{ p.id }}" {{ 'selected' if p.id == ui_config.defaults.serial_plotter_default_port_id }}>{{ p.label }}</option>
+          {% endif %}{% endfor %}
+        </select>
+      </div>
+      <div class="control-group">
         <label>X-Axis</label>
         <select id="xAxisFilter" class="osc-select">
           <option value="time">Time (s)</option>
@@ -258,11 +266,26 @@ function updateStats() {
   document.getElementById('ch1Max').textContent = ch1Max !== null ? ch1Max.toFixed(2) : '-';
 }
 
-socket.on('sensor_data', (payload) => {
-  if (!isRunning || !payload) return;
+const portSelect = document.getElementById('portSelect');
+portSelect.addEventListener('change', () => {
+  dataBuffer.length = 0;
+  ch1Min = null; ch1Max = null;
+  const ch1Select = document.getElementById('ch1Variable');
+  const ch2Select = document.getElementById('ch2Variable');
+  ch1Select.innerHTML = '<option value="">Auto</option>';
+  ch2Select.innerHTML = '<option value="">Auto</option>';
+});
+
+socket.on('sensor_data', (msg) => {
+  if (!isRunning || !msg) return;
+  const conn_id = msg.conn_id;
+  const selectedPort = portSelect.value;
+  if (selectedPort && conn_id && selectedPort !== conn_id) return; // not the port we're plotting
+  const payload = (msg.data && typeof msg.data === 'object') ? msg.data : msg; // tolerate a legacy flat payload
+
   dataRateCounter++;
   sampleCount++;
-  
+
   const keys = Object.keys(payload).filter(k => !k.startsWith('_'));
   const var1 = document.getElementById('ch1Variable').value || keys[0];
   const var2 = document.getElementById('ch2Variable').value || keys[1];
