@@ -207,7 +207,7 @@ button{padding:8px 10px;border-radius:6px;border:none;cursor:pointer}
         <div style="display:flex;gap:12px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
           <label style="display:flex;gap:6px;align-items:center">Port
             <select id="chartPortSelect" class="small-input" style="width:140px;margin-left:6px" {{ 'disabled' if not ui_config.defaults.serial_plotter_allow_port_switch }}>
-              {% for p in ui_config.serial_ports %}{% if p.student_visible %}
+              {% for p in ui_config.serial_ports %}{% if p.student_visible or p.plotter_visible %}
               <option value="{{ p.id }}" {{ 'selected' if p.id == ui_config.defaults.serial_plotter_default_port_id }}>{{ p.label }}</option>
               {% endif %}{% endfor %}
             </select>

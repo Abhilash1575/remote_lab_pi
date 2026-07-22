@@ -81,14 +81,26 @@ osc_settings = {
     'trig_src': 0  # 0 = CH1, 1 = CH2
 }
 
+OSC_KNOWN_VID_PID = [
+    (0x0483, 0x5740),  # STM32 CDC ACM (the actual scope board)
+    (0x10c4, 0xea60),  # legacy ESP32/Arduino: CP210x
+    (0x1a86, 0x7523),  # legacy ESP32/Arduino: CH340
+]
+
 def detect_osc_port():
-    """Detect the scope board's USB VID/PID: STM32 CDC ACM (0483:5740), with
-    legacy ESP32/Arduino USB-serial bridges (CP210x, CH340) kept as fallback."""
+    """Detect the scope board's USB VID:PID (STM32 CDC ACM 0483:5740, with legacy
+    ESP32/Arduino USB-serial bridges kept as fallback). Requires an exact vid+pid
+    pair match AND a /dev/ttyACM* path, since the scope always enumerates as CDC
+    ACM while student/teacher MCU boards (CP210x/CH340 bridges) enumerate as
+    /dev/ttyUSB* — this keeps a teacher/student board from ever being misdetected
+    as the oscilloscope just because it shares a VID or PID with one of these pairs."""
     global OSC_PORT
     if list_ports is None: return None
     ports = list_ports.comports()
     for p in ports:
-        if any(vid_pid in (p.vid, p.pid) for vid_pid in [0x0483, 0x5740, 0x10c4, 0xea60, 0x1a86, 0x7523]):
+        if not re.match(r'^/dev/ttyACM\d+$', p.device):
+            continue
+        if (p.vid, p.pid) in OSC_KNOWN_VID_PID:
              OSC_PORT = p.device
              print(f"[OSC] Auto-detected scope board at {OSC_PORT}")
              return OSC_PORT
@@ -879,11 +891,16 @@ def admin_settings():
         main_view = request.form.get('main_view')
         if main_view not in ('plotter', 'oscilloscope'):
             main_view = 'plotter'
+        required_prefixes = [
+            kw.strip() for kw in (request.form.get('serial_plotter_required_prefixes') or '').split(',')
+            if kw.strip()
+        ]
         new_defaults = {
             'main_view': main_view,
             'dynamic_controls_visible': request.form.get('dynamic_controls_visible') == 'on',
             'serial_plotter_allow_port_switch': request.form.get('serial_plotter_allow_port_switch') == 'on',
             'serial_plotter_default_port_id': (request.form.get('serial_plotter_default_port_id') or '').strip(),
+            'serial_plotter_required_prefixes': required_prefixes,
         }
         experiment_name = (request.form.get('experiment_name') or '').strip()
         cfg = save_ui_config(new_controls, new_defaults, experiment_name=experiment_name)
@@ -1522,6 +1539,18 @@ def serial_reader_worker(conn_id, serial_obj, stop_event):
             if any(sep in text for sep in [':', '=', '@', '>', '#', '^', '!', '$', '*', '%', '~', '\\', '|', '+', '-', ';', ',']) and any(c.isdigit() for c in text):
                 # Flexible parsing similar to client-side
                 trimmed = re.sub(r'^\d{1,2}:\d{2}:\d{2}\s*', '', text.strip())  # remove timestamp
+
+                # Admin-configurable required prefixes (e.g. "Temperature") a line must
+                # start with to be treated as plotter data; empty list = no requirement.
+                # The prefix is only a gate, not stripped out — it's commonly the data
+                # key itself (e.g. "Temperature: 23.5"), so removing it would leave a
+                # bare number with no key to attach it to.
+                required_prefixes = load_ui_config().get('defaults', {}).get('serial_plotter_required_prefixes', [])
+                if required_prefixes:
+                    prefix_match = next((kw for kw in required_prefixes if trimmed.lower().startswith(kw.lower())), None)
+                    if prefix_match is None:
+                        continue
+
                 # Split on |, ;, or , to handle various serial formats like 'V: 16.15 | I: 4.18'
                 pairGroups = re.split(r'[|;,]', trimmed)
                 data = {}
@@ -1555,7 +1584,9 @@ def on_connect():
     emit('ports_list', list_serial_ports())
     cfg = get_student_ui_config()
     student_ports = cfg.get('serial_ports', [])
-    student_ids = {p['id'] for p in student_ports}
+    # Excludes the plotter-only stub for a hidden default port (student_visible=False,
+    # see get_student_ui_config) — its real device path/baud must never reach the client.
+    student_ids = {p['id'] for p in student_ports if p.get('student_visible', True)}
     with serial_connections_lock:
         active = {cid: {'port': c['port'], 'baud': c['baud']} for cid, c in serial_connections.items() if cid in student_ids}
     emit('serial_ports_config', {'ports': student_ports, 'active': active})

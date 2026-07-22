@@ -39,6 +39,10 @@ DEFAULT_UI_CONFIG = {
         'dynamic_controls_visible': True,
         'serial_plotter_allow_port_switch': True,
         'serial_plotter_default_port_id': '',
+        # Line prefixes (e.g. "DATA:") a serial line must start with to be
+        # parsed as plotter data. Empty list = no requirement, any line with
+        # a separator + digit is parsed (original behavior).
+        'serial_plotter_required_prefixes': [],
     },
     'required_controls': [],
     # Each entry: {id, label, port, baud, student_visible, auto_connect,
@@ -131,7 +135,26 @@ def get_student_ui_config():
     since the full config's serial_ports includes hidden ports' labels/device
     paths, which the whole point of 'student_visible' is to keep from students."""
     cfg = get_effective_ui_config()
-    cfg['serial_ports'] = [p for p in cfg['serial_ports'] if p.get('student_visible', True)]
+    visible_ports = [p for p in cfg['serial_ports'] if p.get('student_visible', True)]
+
+    # A hidden port (e.g. a teacher-only board) can still be the Serial Plotter's
+    # default target. It must stay out of the Serial Monitor card entirely (no
+    # device path, baud, or connect controls), but the chart needs *some* label
+    # to show as the selected/default option — so expose a bare id+label stub,
+    # marked plotter_visible (not student_visible) so it's only picked up by the
+    # chart's port dropdown, never by anything gated on student_visible.
+    default_id = cfg['defaults'].get('serial_plotter_default_port_id')
+    if default_id and not any(p['id'] == default_id for p in visible_ports):
+        hidden_default = next((p for p in cfg['serial_ports'] if p['id'] == default_id), None)
+        if hidden_default:
+            visible_ports.append({
+                'id': hidden_default['id'],
+                'label': hidden_default['label'],
+                'student_visible': False,
+                'plotter_visible': True,
+            })
+
+    cfg['serial_ports'] = visible_ports
     return cfg
 
 

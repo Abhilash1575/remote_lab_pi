@@ -103,6 +103,12 @@ button{padding:9px 16px;border-radius:6px;border:none;cursor:pointer;background:
             {% endfor %}
           </select>
         </div>
+        <div class="row" style="flex-direction:column;align-items:stretch;gap:6px">
+          <label for="serial_plotter_required_prefixes">Required line prefix(es)</label>
+          <input type="text" class="wide" id="serial_plotter_required_prefixes" name="serial_plotter_required_prefixes"
+                 value="{{ cfg.defaults.serial_plotter_required_prefixes | join(', ') }}" placeholder="e.g. DATA:, SENSOR:">
+          <p class="note">Comma-separated. If set, only serial lines starting with one of these (case-insensitive) are plotted — everything else still shows in the Serial Monitor feed but is ignored by the chart. Leave blank to plot any line that looks like data (default).</p>
+        </div>
       </div>
     </div>
   </form>
