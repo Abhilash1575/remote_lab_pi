@@ -292,11 +292,19 @@ echo "Installing FFmpeg and WebRTC dependencies..."
 sudo apt-get update -qq
 sudo apt-get install -y -qq libavformat-dev libavcodec-dev libavdevice-dev libavutil-dev libavfilter-dev libswscale-dev libswresample-dev ffmpeg 2>/dev/null || true
 
-# Install aiortc WITHOUT dependencies (av is not needed for basic operation)
-echo "Installing aiortc without av dependency..."
+# Install aiortc without letting pip auto-resolve its dependencies (keeps
+# it from pulling in a newer av than what's actually compatible), then
+# install av explicitly, pinned to aiortc's declared supported range.
+# av is a HARD requirement for real WebRTC audio (aiortc imports it at
+# module load time) -- prebuilt aarch64 wheels exist on PyPI, no need to
+# build from source, but the FFmpeg dev headers above are kept as a
+# fallback in case a future Python version has no prebuilt wheel yet.
+echo "Installing aiortc..."
 pip install --no-deps aiortc || echo "Warning: aiortc installation failed."
+echo "Installing av (required by aiortc for real audio encoding)..."
+pip install "av>=14.0.0,<17.0.0" || echo "Warning: av installation failed. WebRTC audio will not work."
 
-# Install other required packages (excluding av which fails to build on aarch64)
+# Install other required packages
 pip install aioice cryptography google-crc32c pyee pylibsrtp pyopenssl || echo "Warning: Some aiortc dependencies failed."
 
 # Install Python deps from root requirements.txt (which has all dependencies without av)
@@ -319,7 +327,7 @@ Type=simple
 User=$USER
 WorkingDirectory=$PROJECT_DIR
 EnvironmentFile=$PROJECT_DIR/.env
-ExecStart=$PROJECT_DIR/venv/bin/python $PROJECT_DIR/lab-pi/app.py
+ExecStart=$PROJECT_DIR/venv/bin/python $PROJECT_DIR/app.py
 Restart=always
 RestartSec=10
 StandardOutput=append:/var/log/vlab-lab-pi.log
@@ -382,15 +390,15 @@ sudo usermod -a -G gpio $USER
 echo -e "${YELLOW}Step 11: Setting up Audio/Video streaming services...${NC}"
 
 # Copy service files
-if [ -f "$PROJECT_DIR/Audio/services/mjpg-streamer.service" ]; then
-    sudo cp "$PROJECT_DIR/Audio/services/mjpg-streamer.service" /etc/systemd/system/
+if [ -f "$PROJECT_DIR/systemd/mjpg-streamer.service" ]; then
+    sudo cp "$PROJECT_DIR/systemd/mjpg-streamer.service" /etc/systemd/system/
     # Replace %i with actual username
     sudo sed -i "s|%i|$CURRENT_USER|g" /etc/systemd/system/mjpg-streamer.service
     echo "Copied and configured mjpg-streamer.service"
 fi
 
-if [ -f "$PROJECT_DIR/Audio/services/audio_stream.service" ]; then
-    sudo cp "$PROJECT_DIR/Audio/services/audio_stream.service" /etc/systemd/system/
+if [ -f "$PROJECT_DIR/systemd/audio_stream.service" ]; then
+    sudo cp "$PROJECT_DIR/systemd/audio_stream.service" /etc/systemd/system/
     sudo sed -i "s|%h|$CURRENT_HOME|g" /etc/systemd/system/audio_stream.service
     sudo sed -i "s|%i|$CURRENT_USER|g" /etc/systemd/system/audio_stream.service
     echo "Copied and configured audio_stream.service"
@@ -414,8 +422,8 @@ sudo systemctl start audio_stream.service 2>/dev/null || true
 echo -e "${YELLOW}Step 12: Setting up UPS monitoring service...${NC}"
 
 # Copy UPS service file
-if [ -f "$PROJECT_DIR/services/dfrobot-ups.service" ]; then
-    sudo cp "$PROJECT_DIR/services/dfrobot-ups.service" /etc/systemd/system/
+if [ -f "$PROJECT_DIR/systemd/dfrobot-ups.service" ]; then
+    sudo cp "$PROJECT_DIR/systemd/dfrobot-ups.service" /etc/systemd/system/
     echo "Copied dfrobot-ups.service"
     
     # Update the service file with correct paths

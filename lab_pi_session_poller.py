@@ -15,7 +15,7 @@ Or with custom admin URL:
     ADMIN_PI_URL=http://192.168.1.100:5000 python3 lab_pi_session_poller.py
 
 Install as service on Lab Pi:
-    sudo cp lab_pi_session_poller.service /etc/systemd/system/
+    sudo cp systemd/lab_pi_session_poller.service /etc/systemd/system/
     sudo systemctl enable lab_pi_session_poller
     sudo systemctl start lab_pi_session_poller
 """

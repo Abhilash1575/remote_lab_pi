@@ -1,14 +1,11 @@
 -e vlab.db
 __pycache__/
 *.pyc
-lab-pi/ui_config.json
-lab-pi/admin_password.hash
 .env
 battery_status.json
 ups_log.csv
 
 # Per-Pi experiment content: each Lab Pi hosts a different board/experiment,
-# so its uploaded/factory-reset firmware and manual PDF are local state, not shared source.
-uploads/
-default_fw/
-**/static/sop/
+# so its UI config, admin password hash, uploaded/factory-reset firmware,
+# and manual PDF are local state, not shared source.
+data/

@@ -72,7 +72,7 @@ echo "✅ UPS monitor installed"
 ### 6️⃣ SYSTEMD SERVICE ###
 echo "⚙️ Creating service..."
 
-SERVICE_FILE="$PROJECT_DIR/services/dfrobot-ups.service"
+SERVICE_FILE="$PROJECT_DIR/systemd/dfrobot-ups.service"
 SYSTEMD_SERVICE="/etc/systemd/system/dfrobot-ups.service"
 
 sudo cp "$SERVICE_FILE" "$SYSTEMD_SERVICE"

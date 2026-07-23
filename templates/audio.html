@@ -169,8 +169,8 @@
 
     <script>
         let pc = null;
-        // Audio server runs on port 9002
-        const AUDIO_SERVER_URL = window.location.protocol + '//' + window.location.hostname + ':9002';
+        // Audio server runs on port 9000
+        const AUDIO_SERVER_URL = window.location.protocol + '//' + window.location.hostname + ':9000';
 
         function showStatus(msg, isError = false) {
             const status = document.getElementById('status');
@@ -227,7 +227,7 @@
                 await pc.setRemoteDescription(answer);
             } catch (error) {
                 console.error('Failed to start audio:', error);
-                showStatus('Failed to connect: ' + error.message + '. Make sure audio server is running on port 9002.', true);
+                showStatus('Failed to connect: ' + error.message + '. Make sure audio server is running on port 9000.', true);
                 stop();
             }
         }

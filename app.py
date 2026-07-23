@@ -4,7 +4,7 @@ import os
 
 # Load environment variables from .env file
 from dotenv import load_dotenv
-env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env')
+env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env')
 load_dotenv(env_path)
 
 # Import lgpio FIRST before eventlet patches anything!
@@ -120,9 +120,9 @@ from admin_config import (
 
 # ---------- CONFIG ----------
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))  # base path relative to script location
-UPLOAD_DIR = os.path.join(BASE_DIR, 'uploads')
-DEFAULT_FW_DIR = os.path.join(BASE_DIR, 'default_fw')  # contains esp32_default.bin etc
-SOP_DIR = os.path.join(BASE_DIR, 'static', 'sop')      # contains exp.pdf
+UPLOAD_DIR = os.path.join(BASE_DIR, 'data', 'uploads')
+DEFAULT_FW_DIR = os.path.join(BASE_DIR, 'data', 'default_fw')  # contains esp32_default.bin etc
+SOP_DIR = os.path.join(BASE_DIR, 'data', 'sop')      # contains exp.pdf
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(DEFAULT_FW_DIR, exist_ok=True)
 os.makedirs(SOP_DIR, exist_ok=True)

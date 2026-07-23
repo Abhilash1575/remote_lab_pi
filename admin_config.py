@@ -14,8 +14,9 @@ from flask import session, redirect, url_for, request, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-UI_CONFIG_PATH = os.path.join(BASE_DIR, 'ui_config.json')
-ADMIN_PW_HASH_PATH = os.path.join(BASE_DIR, 'admin_password.hash')
+UI_CONFIG_PATH = os.path.join(BASE_DIR, 'data', 'ui_config.json')
+ADMIN_PW_HASH_PATH = os.path.join(BASE_DIR, 'data', 'admin_password.hash')
+os.makedirs(os.path.dirname(UI_CONFIG_PATH), exist_ok=True)
 
 # Extensible registry: (key, label). Missing keys in an on-disk config
 # default to enabled, so adding a new entry here never breaks old files.

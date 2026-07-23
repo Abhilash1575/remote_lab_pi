@@ -1,18 +1,125 @@
 #!/usr/bin/env python3
 import json
+import os
+import re
 import asyncio
 import threading
+import subprocess
 import base64
-import random
+from dotenv import load_dotenv
+
+load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env'))
+
 from flask import Flask, request, jsonify
 from flask_socketio import SocketIO, send, emit
+from aiortc import RTCPeerConnection, RTCSessionDescription
+from aiortc.contrib.media import MediaPlayer
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'virtual-lab-audio-secret'
 socketio = SocketIO(app, cors_allowed_origins='*', async_mode='threading')
 
+@app.after_request
+def add_cors_headers(response):
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+    return response
+
 audio_sessions = {}
 latest_audio = {}
+
+# ---------- WebRTC (real aiortc peer connections) ----------
+
+def _ensure_alsa_config_workaround():
+    """The aarch64 PyAV wheel bundles a static alsa-lib compiled with a
+    hardcoded confdir from its own build environment (/tmp/vendor/share/alsa).
+    Without a real alsa.conf tree at that exact path, av.open(..., format='alsa')
+    fails for EVERY device string (including 'default') with "Unknown PCM ...".
+    Symlinking the real system config into that path is safe and idempotent --
+    cheap enough to redo on every process start rather than depend on
+    machine-specific setup."""
+    try:
+        vendor_dir = '/tmp/vendor/share'
+        os.makedirs(vendor_dir, exist_ok=True)
+        link = os.path.join(vendor_dir, 'alsa')
+        if not os.path.islink(link) or os.readlink(link) != '/usr/share/alsa':
+            if os.path.lexists(link):
+                os.remove(link)
+            os.symlink('/usr/share/alsa', link)
+    except OSError as e:
+        print(f'[WebRTC] Could not set up ALSA config workaround: {e}')
+
+def _detect_capture_device():
+    """Find the Lab Pi's microphone. 'default' can't be relied on -- on
+    this hardware (and likely others) the system default PCM is asymmetric
+    and has no capture side at all (the onboard output has no mic), while
+    the real microphone is a USB device enumerated on a different card.
+    Auto-detect the first capture-capable card via `arecord -l`; override
+    with AUDIO_INPUT_DEVICE in .env for a Pi with multiple capture devices
+    where auto-detection picks the wrong one."""
+    override = os.environ.get('AUDIO_INPUT_DEVICE')
+    if override:
+        return override
+    try:
+        output = subprocess.run(
+            ['arecord', '-l'], capture_output=True, text=True, timeout=5
+        ).stdout
+        match = re.search(r'^card (\d+):.*device (\d+):', output, re.MULTILINE)
+        if match:
+            return f'plughw:{match.group(1)},{match.group(2)}'
+    except (OSError, subprocess.SubprocessError) as e:
+        print(f'[WebRTC] ALSA capture device auto-detect failed: {e}')
+    return 'default'
+
+_ensure_alsa_config_workaround()
+MIC_DEVICE = _detect_capture_device()
+print(f'[WebRTC] Using audio capture device: {MIC_DEVICE}')
+
+# aiortc needs a persistently-running asyncio event loop (media keeps
+# flowing after the HTTP response returns), but Flask's routes are sync.
+# Run one event loop for the process lifetime in a background thread and
+# hand coroutines to it from the Flask request thread.
+_webrtc_loop = asyncio.new_event_loop()
+threading.Thread(target=_webrtc_loop.run_forever, daemon=True).start()
+
+def run_on_webrtc_loop(coro, timeout=15):
+    return asyncio.run_coroutine_threadsafe(coro, _webrtc_loop).result(timeout=timeout)
+
+# One active RTCPeerConnection per session_id. A reconnect (page refresh,
+# retry) for the same session closes the previous connection first so we
+# don't leak PeerConnections or hold the mic open from an abandoned one.
+peer_connections = {}
+
+async def _close_pc(session_id):
+    pc = peer_connections.pop(session_id, None)
+    if pc is not None:
+        await pc.close()
+
+async def _handle_offer_async(session_id, sdp, type_):
+    await _close_pc(session_id)
+
+    pc = RTCPeerConnection()
+    peer_connections[session_id] = pc
+
+    @pc.on('connectionstatechange')
+    async def on_connectionstatechange():
+        print(f'[WebRTC] session {session_id} connection state: {pc.connectionState}')
+        if pc.connectionState in ('failed', 'closed'):
+            await _close_pc(session_id)
+
+    player = MediaPlayer(MIC_DEVICE, format='alsa')
+    if player.audio is None:
+        await pc.close()
+        peer_connections.pop(session_id, None)
+        raise RuntimeError(f'No audio track available from input device "{MIC_DEVICE}"')
+    pc.addTrack(player.audio)
+
+    await pc.setRemoteDescription(RTCSessionDescription(sdp=sdp, type=type_))
+    answer = await pc.createAnswer()
+    await pc.setLocalDescription(answer)
+
+    return pc.localDescription.sdp, pc.localDescription.type
 
 @app.route('/health')
 def health():
@@ -51,75 +158,27 @@ def receive_audio():
 
 @app.route('/offer', methods=['POST'])
 def handle_offer():
+    data = request.json
+    sdp = data.get('sdp')
+    type_ = data.get('type', 'offer')
+    session_id = data.get('session_id', 'default')
+
+    print(f'Received audio offer for session: {session_id}')
+
+    if not sdp:
+        return jsonify({'error': 'Missing SDP'}), 400
+
     try:
-        data = request.json
-        sdp = data.get('sdp')
-        session_id = data.get('session_id', 'default')
-        
-        print(f'Received audio offer for session: {session_id}')
-        
-        if not sdp:
-            return jsonify({'error': 'Missing SDP'}), 400
-        
-        audio_sessions[session_id] = {
-            'sdp': sdp,
-            'type': 'offer',
-            'active': True
-        }
-        
-        answer_sdp = generate_webrtc_answer(sdp)
-        
-        return jsonify({
-            'type': 'answer',
-            'sdp': answer_sdp,
-            'session_id': session_id
-        })
+        answer_sdp, answer_type = run_on_webrtc_loop(_handle_offer_async(session_id, sdp, type_))
     except Exception as e:
         print(f'Error handling offer: {e}')
         return jsonify({'error': str(e)}), 500
 
-def generate_webrtc_answer(offer_sdp):
-    lines = offer_sdp.split('\r\n')
-    answer_lines = []
-    
-    for line in lines:
-        if line.startswith('a=mid:'):
-            answer_lines.append(line)
-        elif line.startswith('a=msid-semantic:'):
-            answer_lines.append(line)
-        elif line.startswith('a=group:'):
-            answer_lines.append(line)
-        elif line.startswith('m='):
-            answer_lines.append(line.replace('recvonly', 'sendonly'))
-        elif line.startswith('a=rtcp-mux'):
-            answer_lines.append(line)
-        elif line.startswith('a=rtcp-rsize'):
-            answer_lines.append(line)
-        elif line.startswith('a=ice-options:'):
-            answer_lines.append(line)
-        elif line.startswith('a=ice-ufrag'):
-            answer_lines.append(line.replace(line.split(':')[1], generate_ice_password()))
-        elif line.startswith('a=ice-pwd'):
-            answer_lines.append(line.replace(line.split(':')[1], generate_ice_password()))
-        elif line.startswith('a=candidate'):
-            answer_lines.append(line)
-        elif line.startswith('a=setup:'):
-            answer_lines.append(line.replace('passive', 'active'))
-        elif line.startswith('a=rtpmap'):
-            answer_lines.append(line)
-        elif line.startswith('a=fmtp'):
-            answer_lines.append(line)
-        elif line.startswith('a=rtcp-fb'):
-            answer_lines.append(line)
-        elif line.startswith('a=ssrc'):
-            answer_lines.append(line)
-        elif line == '':
-            answer_lines.append(line)
-    
-    return '\r\n'.join(answer_lines)
-
-def generate_ice_password():
-    return ''.join(random.choices('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789', k=32))
+    return jsonify({
+        'type': answer_type,
+        'sdp': answer_sdp,
+        'session_id': session_id
+    })
 
 @app.route('/status')
 def status():

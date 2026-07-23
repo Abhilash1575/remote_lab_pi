@@ -18,3 +18,7 @@ scipy>=1.7.0
 # Audio streaming dependencies
 aiohttp>=3.8.0
 aiortc>=1.5.0
+# aiortc's real WebRTC media path (audio encoding/resampling) hard-requires
+# av (PyAV) at import time -- it is not optional. Pin within aiortc's
+# declared compatible range; newer av releases have broken API changes.
+av>=14.0.0,<17.0.0
