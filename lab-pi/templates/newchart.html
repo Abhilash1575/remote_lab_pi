@@ -163,22 +163,18 @@ const chart = new Chart(chartCtx, {
 
 let zoomLevel = 1.0;
 
+// The axes ease toward these targets each frame instead of snapping to them,
+// so changing Time/Div, zoom, or the incoming data range doesn't look like a reset.
+let xAxisMode = document.getElementById('xAxisFilter').value;
+let targetTimeWindow = parseInt(document.getElementById('timeDiv').value) * 10;
+let displayTimeWindow = targetTimeWindow;
+let displayYMin = null, displayYMax = null;
+const AXIS_EASE = 0.15;
+
 function updateScales() {
-  const timeWindow = (parseInt(document.getElementById('timeDiv').value) * 10) / zoomLevel;
-  const xAxisMode = document.getElementById('xAxisFilter').value;
-  
-  if (xAxisMode === 'samples') {
-    chart.options.scales.x.min = -timeWindow / 10; // Rough conversion for samples
-    chart.options.scales.x.max = 0;
-    chart.options.scales.x.title.text = 'Samples (backwards)';
-  } else {
-    chart.options.scales.x.min = -timeWindow;
-    chart.options.scales.x.max = 0;
-    chart.options.scales.x.title.text = 'Time (ms)';
-  }
-  
-  document.getElementById('scaleTimeDiv').textContent = `Window: ${Math.round(timeWindow)}ms`;
-  chart.update('none');
+  targetTimeWindow = (parseInt(document.getElementById('timeDiv').value) * 10) / zoomLevel;
+  xAxisMode = document.getElementById('xAxisFilter').value;
+  chart.options.scales.x.title.text = xAxisMode === 'samples' ? 'Samples (backwards)' : 'Time (ms)';
 }
 
 document.getElementById('timeDiv').addEventListener('change', updateScales);
@@ -211,6 +207,7 @@ document.getElementById('runStopBtn').addEventListener('click', () => {
 document.getElementById('clearBtn').addEventListener('click', () => {
   dataBuffer.length = 0;
   ch1Min = null; ch1Max = null;
+  displayYMin = null; displayYMax = null;
   chart.data.datasets[0].data = [];
   chart.data.datasets[1].data = [];
   chart.update('none');
@@ -227,11 +224,24 @@ document.getElementById('exportCsvBtn').addEventListener('click', () => {
 });
 
 function chartLoop() {
-  if (!isRunning) { requestAnimationFrame(chartLoop); return; }
-  
+  // Ease the visible time window toward its target so Time/Div and zoom changes glide
+  // instead of snapping, whether or not the plot is currently running.
+  displayTimeWindow += (targetTimeWindow - displayTimeWindow) * AXIS_EASE;
+  if (Math.abs(targetTimeWindow - displayTimeWindow) < 0.5) displayTimeWindow = targetTimeWindow;
+
+  if (xAxisMode === 'samples') {
+    chart.options.scales.x.min = -displayTimeWindow / 10; // Rough conversion for samples
+    chart.options.scales.x.max = 0;
+  } else {
+    chart.options.scales.x.min = -displayTimeWindow;
+    chart.options.scales.x.max = 0;
+  }
+  document.getElementById('scaleTimeDiv').textContent = `Window: ${Math.round(displayTimeWindow)}ms`;
+
+  if (!isRunning) { chart.update('none'); requestAnimationFrame(chartLoop); return; }
+
   const now = Date.now();
-  const timeWindow = parseInt(document.getElementById('timeDiv').value) * 10;
-  
+
   // Update data rate
   if (now - lastDataTime >= 1000) {
     document.getElementById('dataRate').textContent = `Rate: ${dataRateCounter}/s`;
@@ -241,20 +251,52 @@ function chartLoop() {
 
   const ch1Data = [];
   const ch2Data = [];
-  
+  let visMin = null, visMax = null;
+
   for (let i = 0; i < dataBuffer.length; i++) {
     const p = dataBuffer[i];
     const x = p.timestamp - now;
-    if (x < -timeWindow) continue;
-    
+    if (x < -displayTimeWindow) continue;
+
     ch1Data.push({ x, y: p.ch1 });
-    if (p.ch2 !== null) ch2Data.push({ x, y: p.ch2 });
+    if (ch1Enabled) {
+      if (visMin === null || p.ch1 < visMin) visMin = p.ch1;
+      if (visMax === null || p.ch1 > visMax) visMax = p.ch1;
+    }
+    if (p.ch2 !== null) {
+      ch2Data.push({ x, y: p.ch2 });
+      if (ch2Enabled) {
+        if (visMin === null || p.ch2 < visMin) visMin = p.ch2;
+        if (visMax === null || p.ch2 > visMax) visMax = p.ch2;
+      }
+    }
   }
-  
+
   chart.data.datasets[0].data = ch1Data;
   chart.data.datasets[1].data = ch2Data;
+
+  // Ease the Y-axis range toward the currently-visible min/max instead of
+  // snapping the autoscale every frame, which is what made the plot look like
+  // it was resetting whenever the visible window or incoming values changed.
+  if (visMin !== null) {
+    const range = visMax - visMin;
+    const padding = range > 0 ? range * 0.15 : Math.max(Math.abs(visMax) * 0.1, 1);
+    const targetYMin = visMin - padding;
+    const targetYMax = visMax + padding;
+
+    if (displayYMin === null) {
+      displayYMin = targetYMin;
+      displayYMax = targetYMax;
+    } else {
+      displayYMin += (targetYMin - displayYMin) * AXIS_EASE;
+      displayYMax += (targetYMax - displayYMax) * AXIS_EASE;
+    }
+    chart.options.scales.y.min = displayYMin;
+    chart.options.scales.y.max = displayYMax;
+  }
+
   chart.update('none');
-  
+
   updateStats();
   requestAnimationFrame(chartLoop);
 }
@@ -270,6 +312,7 @@ const portSelect = document.getElementById('portSelect');
 portSelect.addEventListener('change', () => {
   dataBuffer.length = 0;
   ch1Min = null; ch1Max = null;
+  displayYMin = null; displayYMax = null;
   const ch1Select = document.getElementById('ch1Variable');
   const ch2Select = document.getElementById('ch2Variable');
   ch1Select.innerHTML = '<option value="">Auto</option>';
