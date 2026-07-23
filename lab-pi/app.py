@@ -642,6 +642,23 @@ def list_serial_ports():
         if p.device != OSC_PORT and re.match(r'^/dev/tty(USB|ACM)\d+$', p.device)
     ]
 
+def _resolved_flash_port(explicit_port):
+    """Resolve which device path Flash/Factory-Reset should target: the explicit
+    port the client sent (getFlashPort() on the browser side, resolved from the
+    Primary-target profile), or — if that's blank — the Primary-target profile's
+    own fixed port from admin config. Deliberately never falls back to "whichever
+    port the OS enumerated first": that's how a Teacher MCU port ended up getting
+    factory-reset instead of the Student MCU — enumeration order isn't board
+    identity. Returns (port, error_message); error_message is None on success."""
+    explicit_port = (explicit_port or '').strip()
+    if explicit_port:
+        return explicit_port, None
+    primary = next((p for p in get_effective_ui_config().get('serial_ports', []) if p.get('is_primary_target')), None)
+    if primary and primary.get('port'):
+        return primary['port'], None
+    return None, 'No target port resolved — connect to the primary Serial Monitor port first, or set a fixed port for it in Admin Settings.'
+
+
 def list_admin_port_choices():
     """Stable /dev/serial/by-id paths for the admin's Serial Port picker — these
     stay pointed at the correct physical board across reboots/replugs, unlike
@@ -1235,10 +1252,9 @@ def flash():
     board = request.form.get('board', 'generic')
     if not is_control_enabled('board_select'):
         board = current_board_type or board
-    port = request.form.get('port', '') or ''
-    available_ports = list_serial_ports()
-    default_port = available_ports[0] if available_ports else '/dev/ttyUSB0'
-    port = port or default_port
+    port, port_err = _resolved_flash_port(request.form.get('port', ''))
+    if port_err:
+        return jsonify({'status': port_err}), 400
     fw = request.files.get('firmware')
     if not fw:
         return jsonify({'status': 'No firmware uploaded'}), 400
@@ -1318,10 +1334,9 @@ def factory_reset():
         return jsonify({'error': f'Default firmware not found for board {board}: expected {fpath}'}), 404
 
     # choose command based on board (similar to /flash)
-    port = request.args.get('port') or ''  # optional override
-    available_ports = list_serial_ports()
-    default_port = available_ports[0] if available_ports else '/dev/ttyUSB0'
-    port = port or default_port
+    port, port_err = _resolved_flash_port(data.get('port'))
+    if port_err:
+        return jsonify({'error': port_err}), 400
     # Use sys.executable to ensure we use the venv's Python (which has esptool installed)
     python_exec = sys.executable
     commands = {

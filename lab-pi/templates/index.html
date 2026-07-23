@@ -750,14 +750,15 @@ socket.on('flashing_status', (d) => {
 /* ----------------- FACTORY RESET (client) ----------------- */
 factoryResetBtn.addEventListener('click', async () => {
   const board = boardType.value || 'generic';
+  const port = getFlashPort();
   const confirmReset = confirm(`Factory Reset will flash the default firmware for board: ${board}.\nProceed?`);
   if(!confirmReset) return;
   try {
-    console.log(`[factory] Requesting factory reset for ${board}...`);
+    console.log(`[factory] Requesting factory reset for ${board} on ${port || '(server default)'}...`);
     const resp = await fetch('/factory_reset', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ board })
+      body: JSON.stringify({ board, port })
     });
     const j = await resp.json();
     if(resp.ok){
