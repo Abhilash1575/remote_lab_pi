@@ -1,123 +1,251 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8" />
-<title>Live Video Feed - Embedded Virtual Lab</title>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Roboto+Mono:wght@400;700&display=swap" rel="stylesheet">
-<style>
-html, body { height: 100%; margin: 0; font-family: 'Inter', sans-serif; background: #1c1c2b; color: #e0e0e0; overflow: hidden; }
-.fullscreen-video { width: 100vw; height: 100vh; object-fit: cover; border: none; }
-.controls { position: absolute; top: 20px; right: 20px; display: flex; gap: 10px; z-index: 10; }
-.button { padding: 10px 15px; border-radius: 6px; border: none; cursor: pointer; background: #00f0ff; color: #041726; font-weight: 700; }
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Audio Stream - Lab Pi</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 100vh;
+            color: #fff;
+        }
+        
+        .header {
+            background: #0f3460;
+            padding: 15px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+        }
+        
+        .header h1 {
+            color: #00d9ff;
+            font-size: 1.3em;
+        }
+        
+        .back-btn {
+            color: #00d9ff;
+            text-decoration: none;
+            padding: 8px 16px;
+            border: 1px solid #00d9ff;
+            border-radius: 5px;
+            transition: all 0.3s;
+        }
+        
+        .back-btn:hover {
+            background: rgba(0, 217, 255, 0.1);
+        }
+        
+        .container {
+            max-width: 800px;
+            margin: 30px auto;
+            padding: 20px;
+        }
+        
+        .audio-card {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 15px;
+            padding: 30px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            text-align: center;
+        }
+        
+        .audio-card h2 {
+            color: #00d9ff;
+            margin-bottom: 20px;
+        }
+        
+        .audio-player {
+            width: 100%;
+            margin: 20px 0;
+        }
+        
+        .controls {
+            margin-top: 20px;
+        }
+        
+        button {
+            padding: 12px 24px;
+            margin: 5px;
+            border-radius: 6px;
+            border: none;
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 14px;
+            transition: all 0.3s;
+        }
+        
+        #startBtn {
+            background: #00d9ff;
+            color: #041726;
+        }
+        
+        #startBtn:hover {
+            background: #00b8d4;
+        }
+        
+        #stopBtn {
+            background: #ff4757;
+            color: white;
+        }
+        
+        #stopBtn:hover {
+            background: #ff3344;
+        }
+        
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        #status {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 8px;
+            font-weight: 500;
+        }
+        
+        .error {
+            background: rgba(255, 71, 87, 0.2);
+            color: #ff4757;
+            border: 1px solid #ff4757;
+        }
+        
+        .success {
+            background: rgba(46, 213, 115, 0.2);
+            color: #2ed573;
+            border: 1px solid #2ed573;
+        }
+        
+        .info {
+            background: rgba(0, 217, 255, 0.1);
+            color: #00d9ff;
+            border: 1px solid #00d9ff;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 20px;
+            text-align: left;
+        }
+        
+        .info p {
+            margin: 5px 0;
+            font-size: 14px;
+        }
+    </style>
 </head>
 <body>
-<img id="videoFeed" class="fullscreen-video" alt="camera">
-<audio id="audioFeed" autoplay></audio>
-<div class="controls">
-    <button id="backBtn" class="button">Back to Main</button>
-</div>
+    <div class="header">
+        <h1>🎤 Audio Stream - Lab Pi</h1>
+        <a href="/experiment" class="back-btn">← Back to Experiment</a>
+    </div>
+    
+    <div class="container">
+        <div class="audio-card">
+            <h2>Real-time Audio Streaming</h2>
+            <audio id="player" class="audio-player" autoplay controls></audio>
+            
+            <div class="controls">
+                <button id="startBtn" onclick="start()">Start Streaming</button>
+                <button id="stopBtn" onclick="stop()" disabled>Stop Streaming</button>
+            </div>
+            
+            <div id="status"></div>
+            
+            <div class="info">
+                <p><strong>Note:</strong> This streams audio from the Lab Pi device to your browser.</p>
+                <p>Make sure your browser allows autoplay and that speakers are enabled.</p>
+            </div>
+        </div>
+    </div>
 
-<script>
-// Session monitoring - auto-close when session ends
-function checkSessionStatus() {
-    // Check if there are any active sessions running
-    const keys = Object.keys(localStorage);
-    const activeSessions = keys.filter(key => key.startsWith('sessionStatus_') && localStorage.getItem(key) === 'IN_PROGRESS');
-    const completedSessions = keys.filter(key => key.startsWith('sessionStatus_') && localStorage.getItem(key) === 'COMPLETED');
+    <script>
+        let pc = null;
+        // Audio server runs on port 9002
+        const AUDIO_SERVER_URL = window.location.protocol + '//' + window.location.hostname + ':9002';
 
-    // Only close if there are completed sessions AND no active sessions running
-    if (completedSessions.length > 0 && activeSessions.length === 0) {
-        // All sessions have ended, close this window
-        window.close();
-    }
-}
-
-// Check session status every 5 seconds
-setInterval(checkSessionStatus, 5000);
-
-document.getElementById('backBtn').addEventListener('click', () => {
-    window.close();
-});
-
-// Dynamic host configuration - automatically detects IP and ports
-const BASE_URL = window.location.origin;  // e.g., http://192.168.1.100:5000
-const VIDEO_PORT = 8080;  // Camera stream port - change if different
-const AUDIO_PORT = 9000;  // Audio server port - change if different
-
-// Video stream URL - uses same host as current page but different port for camera
-const videoUrl = `${window.location.protocol}//${window.location.hostname}:${VIDEO_PORT}/?action=stream&resolution=1920x1080&quality=100`;
-
-// Audio server URL - uses same host but audio port
-const audioServerUrl = `${window.location.protocol}//${window.location.hostname}:${AUDIO_PORT}`;
-
-console.log('Video URL:', videoUrl);
-console.log('Audio server URL:', audioServerUrl);
-
-// Set video feed dynamically
-document.getElementById('videoFeed').src = videoUrl;
-
-// Audio setup (similar to main page)
-let audioPC = null;
-let audioStarting = false;
-
-async function startAudio() {
-    if (audioPC || audioStarting) return;
-    audioStarting = true;
-
-    try {
-        audioPC = new RTCPeerConnection();
-
-        audioPC.ontrack = (event) => {
-            document.getElementById('audioFeed').srcObject = event.streams[0];
-        };
-
-        audioPC.oniceconnectionstatechange = () => {
-            if (audioPC.iceConnectionState === 'failed' || audioPC.iceConnectionState === 'closed') {
-                stopAudio();
-            }
-        };
-
-        audioPC.addTransceiver('audio', { direction: 'recvonly' });
-
-        const offer = await audioPC.createOffer();
-        await audioPC.setLocalDescription(offer);
-
-        // Use dynamic audio server URL
-        const response = await fetch(`${audioServerUrl}/offer`, {
-            method: 'POST',
-            body: JSON.stringify({
-                sdp: audioPC.localDescription.sdp,
-                type: audioPC.localDescription.type
-            }),
-            headers: { 'Content-Type': 'application/json' }
-        });
-
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        function showStatus(msg, isError = false) {
+            const status = document.getElementById('status');
+            status.textContent = msg;
+            status.className = isError ? 'error' : 'success';
         }
 
-        const answer = await response.json();
-        await audioPC.setRemoteDescription(answer);
+        async function start() {
+            document.getElementById("startBtn").disabled = true;
+            document.getElementById("stopBtn").disabled = false;
+            showStatus('Connecting to audio server...');
 
-        audioStarting = false;
-    } catch (error) {
-        console.error('Failed to start audio:', error);
-        stopAudio();
-        audioStarting = false;
-    }
-}
+            try {
+                pc = new RTCPeerConnection();
 
-function stopAudio() {
-    if (audioPC) {
-        audioPC.close();
-        audioPC = null;
-    }
-    document.getElementById('audioFeed').srcObject = null;
-}
+                pc.ontrack = (event) => {
+                    document.getElementById("player").srcObject = event.streams[0];
+                    showStatus('Audio connected successfully!');
+                };
 
-// Auto-start audio on load
-startAudio();
-</script>
+                pc.oniceconnectionstatechange = () => {
+                    console.log('ICE state:', pc.iceConnectionState);
+                    if (pc.iceConnectionState === 'failed') {
+                        showStatus('Connection failed. Click Start to retry.', true);
+                        stop();
+                    } else if (pc.iceConnectionState === 'connected') {
+                        showStatus('Audio connected successfully!');
+                    } else if (pc.iceConnectionState === 'disconnected') {
+                        showStatus('Audio disconnected. Click Start to retry.', true);
+                        stop();
+                    }
+                };
+
+                pc.addTransceiver('audio', { direction: 'recvonly' });
+
+                const offer = await pc.createOffer();
+                await pc.setLocalDescription(offer);
+
+                console.log('Connecting to:', AUDIO_SERVER_URL + '/offer');
+                const response = await fetch(AUDIO_SERVER_URL + '/offer', {
+                    method: "POST",
+                    body: JSON.stringify({
+                        sdp: pc.localDescription.sdp,
+                        type: pc.localDescription.type
+                    }),
+                    headers: { "Content-Type": "application/json" }
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+
+                const answer = await response.json();
+                await pc.setRemoteDescription(answer);
+            } catch (error) {
+                console.error('Failed to start audio:', error);
+                showStatus('Failed to connect: ' + error.message + '. Make sure audio server is running on port 9002.', true);
+                stop();
+            }
+        }
+
+        function stop() {
+            if (pc) {
+                pc.close();
+                pc = null;
+            }
+            document.getElementById("player").srcObject = null;
+            document.getElementById("startBtn").disabled = false;
+            document.getElementById("stopBtn").disabled = true;
+        }
+        
+        // Auto-start audio on page load
+        window.onload = function() {
+            setTimeout(start, 1000);
+        };
+    </script>
 </body>
 </html>
