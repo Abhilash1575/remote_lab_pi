@@ -114,8 +114,8 @@ from admin_config import (
     CONTROL_KEYS, get_effective_ui_config, get_student_ui_config, load_ui_config, save_ui_config,
     is_control_enabled, has_admin_password_configured, password_locked_by_env,
     set_admin_password, verify_admin_password, admin_required,
-    add_required_control, delete_required_control,
-    add_serial_port, delete_serial_port,
+    add_required_control, delete_required_control, update_required_control,
+    add_serial_port, delete_serial_port, update_serial_port,
 )
 
 # ---------- CONFIG ----------
@@ -642,6 +642,27 @@ def list_serial_ports():
         if p.device != OSC_PORT and re.match(r'^/dev/tty(USB|ACM)\d+$', p.device)
     ]
 
+def list_admin_port_choices():
+    """Stable /dev/serial/by-id paths for the admin's Serial Port picker — these
+    stay pointed at the correct physical board across reboots/replugs, unlike
+    /dev/ttyUSB0 which is just assigned by detection order. Excludes whatever
+    raw device the Oscilloscope currently owns. If a board's bridge chip has no
+    unique serial (common with CH340), it won't get its own by-id entry once a
+    second identical board is attached — the admin form always allows typing a
+    custom path (e.g. a /dev/serial/by-path/... one) as a fallback for that case.
+    """
+    by_id_dir = '/dev/serial/by-id'
+    if not os.path.isdir(by_id_dir):
+        return []
+    choices = []
+    for name in sorted(os.listdir(by_id_dir)):
+        full = os.path.join(by_id_dir, name)
+        resolved = os.path.realpath(full)
+        if OSC_PORT and resolved == OSC_PORT:
+            continue
+        choices.append({'path': full, 'label': name, 'resolved': resolved})
+    return choices
+
 @app.route('/')
 def index():
     # Provide default values for session variables
@@ -910,7 +931,7 @@ def admin_settings():
 
     cfg = get_effective_ui_config()
     return render_template(
-        'admin_settings.html', cfg=cfg, control_keys=CONTROL_KEYS,
+        'admin_settings.html', cfg=cfg, control_keys=CONTROL_KEYS, available_ports=list_admin_port_choices(),
         env_password_locked=password_locked_by_env(), saved=saved, password_error=None, port_error=None,
     )
 
@@ -934,42 +955,63 @@ def admin_change_password():
 
     cfg = get_effective_ui_config()
     return render_template(
-        'admin_settings.html', cfg=cfg, control_keys=CONTROL_KEYS,
+        'admin_settings.html', cfg=cfg, control_keys=CONTROL_KEYS, available_ports=list_admin_port_choices(),
         env_password_locked=password_locked_by_env(), saved=False, password_error=error, port_error=None,
     )
+
+def _required_control_from_form(form):
+    rc_type = form.get('rc_type', '')
+    label = (form.get('rc_label') or '').strip()
+    if rc_type not in ('slider', 'button', 'readout') or not label:
+        return None
+    control = {'type': rc_type, 'label': label}
+    # Which serial-port profile this control talks to. Blank = the primary
+    # target (default, unchanged behavior); set explicitly to lock a control
+    # to a specific board — e.g. a required slider pinned to the Teacher MCU
+    # while a student's own controls keep going to the primary/student MCU.
+    control['portId'] = (form.get('rc_port_id') or '').strip()
+    if rc_type == 'slider':
+        try:
+            control['min'] = float(form.get('rc_min', 0))
+        except (TypeError, ValueError):
+            control['min'] = 0
+        try:
+            control['max'] = float(form.get('rc_max', 1023))
+        except (TypeError, ValueError):
+            control['max'] = 1023
+        try:
+            control['precision'] = max(0, min(2, int(form.get('rc_precision', 0))))
+        except (TypeError, ValueError):
+            control['precision'] = 0
+        control['dataKey'] = label.lower().replace(' ', '_')
+        control['cmdFormat'] = (form.get('rc_cmd_format') or '').strip() or '{value}'
+    elif rc_type == 'button':
+        control['onCmd'] = form.get('rc_on_cmd', '1')
+        control['offCmd'] = form.get('rc_off_cmd', '0')
+    elif rc_type == 'readout':
+        control['dataKey'] = (form.get('rc_data_key') or label.lower().replace(' ', '_')).strip()
+        # 'unit' is a LaTeX source string (e.g. ^\circ\text{C}), rendered client-side with KaTeX.
+        control['unit'] = form.get('rc_unit', '')
+        control['decimals'] = form.get('rc_decimals', '')
+    return control
+
 
 @app.route('/admin/settings/controls/add', methods=['POST'])
 @admin_required
 def admin_add_required_control():
-    rc_type = request.form.get('rc_type', '')
-    label = (request.form.get('rc_label') or '').strip()
-    if rc_type in ('slider', 'button', 'readout') and label:
-        control = {'type': rc_type, 'label': label}
-        if rc_type == 'slider':
-            try:
-                control['min'] = float(request.form.get('rc_min', 0))
-            except (TypeError, ValueError):
-                control['min'] = 0
-            try:
-                control['max'] = float(request.form.get('rc_max', 1023))
-            except (TypeError, ValueError):
-                control['max'] = 1023
-            try:
-                control['precision'] = max(0, min(2, int(request.form.get('rc_precision', 0))))
-            except (TypeError, ValueError):
-                control['precision'] = 0
-            control['dataKey'] = label.lower().replace(' ', '_')
-            control['cmdFormat'] = (request.form.get('rc_cmd_format') or '').strip() or '{value}'
-        elif rc_type == 'button':
-            control['onCmd'] = request.form.get('rc_on_cmd', '1')
-            control['offCmd'] = request.form.get('rc_off_cmd', '0')
-        elif rc_type == 'readout':
-            control['dataKey'] = (request.form.get('rc_data_key') or label.lower().replace(' ', '_')).strip()
-            # 'unit' is a LaTeX source string (e.g. ^\circ\text{C}), rendered client-side with KaTeX.
-            control['unit'] = request.form.get('rc_unit', '')
-            control['decimals'] = request.form.get('rc_decimals', '')
-            control['portId'] = (request.form.get('rc_port_id') or '').strip()
+    control = _required_control_from_form(request.form)
+    if control:
         add_required_control(control)
+        socketio.emit('ui_config_updated', get_student_ui_config())
+    return redirect(url_for('admin_settings'))
+
+@app.route('/admin/settings/controls/edit', methods=['POST'])
+@admin_required
+def admin_edit_required_control():
+    control_id = request.form.get('control_id', '')
+    control = _required_control_from_form(request.form)
+    if control_id and control:
+        update_required_control(control_id, control)
         socketio.emit('ui_config_updated', get_student_ui_config())
     return redirect(url_for('admin_settings'))
 
@@ -982,36 +1024,62 @@ def admin_delete_required_control():
         socketio.emit('ui_config_updated', get_student_ui_config())
     return redirect(url_for('admin_settings'))
 
+def _serial_port_profile_from_form(form):
+    try:
+        baud = int(form.get('sp_baud', 115200))
+    except (TypeError, ValueError):
+        baud = 115200
+    return {
+        'label': (form.get('sp_label') or '').strip(),
+        'port': (form.get('sp_port') or '').strip(),
+        'baud': baud,
+        'student_visible': form.get('sp_student_visible') == 'on',
+        'auto_connect': form.get('sp_auto_connect') == 'on',
+        'allow_disconnect': form.get('sp_allow_disconnect') == 'on',
+        'is_primary_target': form.get('sp_is_primary_target') == 'on',
+    }
+
+
+def _osc_port_conflict_response(port_value):
+    # The Oscilloscope owns its own auto-detected port and is never something
+    # students connect to or reconfigure via Serial Monitor/Plotter — reject
+    # any profile that would collide with it instead of silently failing later.
+    if not (port_value and OSC_PORT and port_value == OSC_PORT):
+        return None
+    cfg = get_effective_ui_config()
+    return render_template(
+        'admin_settings.html', cfg=cfg, control_keys=CONTROL_KEYS, available_ports=list_admin_port_choices(),
+        env_password_locked=password_locked_by_env(), saved=False, password_error=None,
+        port_error=f'{port_value} is the Oscilloscope\'s port (auto-detected) and cannot be reused here.',
+    )
+
+
 @app.route('/admin/settings/ports/add', methods=['POST'])
 @admin_required
 def admin_add_serial_port():
-    label = (request.form.get('sp_label') or '').strip()
-    if label:
-        try:
-            baud = int(request.form.get('sp_baud', 115200))
-        except (TypeError, ValueError):
-            baud = 115200
-        port_value = (request.form.get('sp_port') or '').strip()
-        # The Oscilloscope owns its own auto-detected port and is never something
-        # students connect to or reconfigure via Serial Monitor/Plotter — reject
-        # any profile that would collide with it instead of silently failing later.
-        if port_value and OSC_PORT and port_value == OSC_PORT:
-            cfg = get_effective_ui_config()
-            return render_template(
-                'admin_settings.html', cfg=cfg, control_keys=CONTROL_KEYS,
-                env_password_locked=password_locked_by_env(), saved=False, password_error=None,
-                port_error=f'{port_value} is the Oscilloscope\'s port (auto-detected) and cannot be reused here.',
-            )
-        profile = {
-            'label': label,
-            'port': port_value,
-            'baud': baud,
-            'student_visible': request.form.get('sp_student_visible') == 'on',
-            'auto_connect': request.form.get('sp_auto_connect') == 'on',
-            'allow_disconnect': request.form.get('sp_allow_disconnect') == 'on',
-            'is_primary_target': request.form.get('sp_is_primary_target') == 'on',
-        }
+    profile = _serial_port_profile_from_form(request.form)
+    if profile['label']:
+        conflict = _osc_port_conflict_response(profile['port'])
+        if conflict:
+            return conflict
         add_serial_port(profile)
+        socketio.emit('ui_config_updated', get_student_ui_config())
+        sync_serial_profiles()
+    return redirect(url_for('admin_settings'))
+
+@app.route('/admin/settings/ports/edit', methods=['POST'])
+@admin_required
+def admin_edit_serial_port():
+    port_id = request.form.get('port_id', '')
+    profile = _serial_port_profile_from_form(request.form)
+    if port_id and profile['label']:
+        conflict = _osc_port_conflict_response(profile['port'])
+        if conflict:
+            return conflict
+        update_serial_port(port_id, profile)
+        # Port/baud may have changed under the same id — force a reconnect with
+        # the new settings instead of leaving a stale connection open.
+        _close_connection(port_id)
         socketio.emit('ui_config_updated', get_student_ui_config())
         sync_serial_profiles()
     return redirect(url_for('admin_settings'))
@@ -1638,6 +1706,64 @@ def handle_send_command(data):
             emit('feedback', {'conn_id': conn_id, 'text': f'[no-serial] {cmd}'})
     except Exception as e:
         emit('feedback', {'conn_id': conn_id, 'text': f'[send error] {e}'})
+
+@socketio.on('reset_serial')
+def handle_reset_serial(data):
+    """Hardware-reset the MCU on conn_id via the USB-serial adapter's DTR/RTS
+    lines, without touching firmware — same mechanism esptool/avrdude use
+    before flashing. Works whether or not conn_id is already connected: if
+    there's a live connection, the pulse rides on it; otherwise a temporary
+    connection is opened using the given port/baud just long enough to send
+    the pulse, then closed — so resetting never requires connecting first.
+    Only works if the board has an auto-reset circuit wiring DTR and/or RTS
+    to its RESET pin (true for Arduino/FTDI and most ESP32 dev boards);
+    otherwise the pulse is a harmless no-op."""
+    data = data or {}
+    conn_id = data.get('conn_id') or _primary_conn_id()
+    if not is_control_enabled('serial_connect'):
+        emit('feedback', {'conn_id': conn_id, 'text': '[reset] Serial Monitor connect is disabled for this session'})
+        return
+
+    with serial_connections_lock:
+        conn = serial_connections.get(conn_id)
+
+    temp_ser = None
+    if conn and conn['ser'] and conn['ser'].is_open:
+        ser = conn['ser']
+    else:
+        if serial is None:
+            emit('feedback', {'conn_id': conn_id, 'text': '[reset] pyserial not available on server'})
+            return
+        port = (data.get('port') or '').strip()
+        if not port:
+            emit('feedback', {'conn_id': conn_id, 'text': '[reset] Not connected and no port given — connect once, or pick a port, first'})
+            return
+        if OSC_PORT and port == OSC_PORT:
+            emit('feedback', {'conn_id': conn_id, 'text': f'[reset] {port} is the Oscilloscope\'s port and cannot be used here'})
+            return
+        try:
+            baud = int(data.get('baud') or 115200)
+            temp_ser = serial.Serial(port, baud, timeout=1)
+            ser = temp_ser
+        except Exception as e:
+            emit('feedback', {'conn_id': conn_id, 'text': f'[reset error] {e}'})
+            return
+
+    try:
+        ser.dtr = False
+        ser.rts = False
+        time.sleep(0.1)
+        ser.dtr = True
+        ser.rts = True
+        emit('feedback', {'conn_id': conn_id, 'text': '[reset] Reset pulse sent to MCU'})
+    except Exception as e:
+        emit('feedback', {'conn_id': conn_id, 'text': f'[reset error] {e}'})
+    finally:
+        if temp_ser:
+            try:
+                temp_ser.close()
+            except Exception:
+                pass
 
 @socketio.on('waveform_config')
 def handle_waveform_config(cfg):

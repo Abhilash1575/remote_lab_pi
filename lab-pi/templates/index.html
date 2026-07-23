@@ -149,6 +149,7 @@ button{padding:8px 10px;border-radius:6px;border:none;cursor:pointer}
         </div>
         <div style="display:flex;gap:8px;margin-bottom:8px">
           <button class="slot-connect" style="background:#2ecc71;color:#fff" {{ 'disabled' if not ui_config.controls.serial_connect }}>Connect</button>
+          <button class="slot-reset" style="background:#f39c12;color:#101018;border-radius:6px" {{ 'disabled' if not ui_config.controls.serial_connect }}>Reset MCU</button>
           <button class="slot-clear" style="background:#333;color:#fff;border-radius:6px">Clear</button>
         </div>
         <div style="display:flex;gap:8px;margin-bottom:8px">
@@ -622,6 +623,7 @@ function initSerialSlots(){
       baudSelect: el.querySelector('.slot-baud'),
       customBaud: el.querySelector('.slot-custom-baud'),
       connectBtn: el.querySelector('.slot-connect'),
+      resetBtn: el.querySelector('.slot-reset'),
       clearBtn: el.querySelector('.slot-clear'),
       feedbackEl: el.querySelector('.slot-feedback'),
       cmdInput: el.querySelector('.slot-cmd'),
@@ -630,6 +632,7 @@ function initSerialSlots(){
       connected: false,
       autoConnectAttempted: false,
       connectTimeoutHandle: null,
+      resetTimeoutHandle: null,
     };
     serialSlots[connId] = slot;
 
@@ -640,6 +643,23 @@ function initSerialSlots(){
     }
     if (slot.refreshBtn) slot.refreshBtn.addEventListener('click', requestPorts);
     slot.connectBtn.addEventListener('click', () => doSlotConnect(slot));
+    if (slot.resetBtn) slot.resetBtn.addEventListener('click', () => {
+      // Works even if this slot isn't currently connected — the server opens
+      // the port just long enough to pulse it, then closes it again — so pass
+      // along the port/baud the same way doSlotConnect would.
+      const port = slot.fixedPort || (slot.portSelect ? slot.portSelect.value : '') || '';
+      const baud = (slot.baudSelect.value === 'custom') ? parseInt(slot.customBaud.value || '115200') : parseInt(slot.baudSelect.value);
+      socket.emit('reset_serial', { conn_id: slot.connId, port, baud });
+      slotFeedbackAdd(slot, 'Requested MCU reset...');
+      const originalText = slot.resetBtn.textContent;
+      slot.resetBtn.disabled = true;
+      slot.resetBtn.textContent = 'Resetting...';
+      if (slot.resetTimeoutHandle) clearTimeout(slot.resetTimeoutHandle);
+      slot.resetTimeoutHandle = setTimeout(() => {
+        slot.resetBtn.disabled = !uiConfigFromServer.controls.serial_connect;
+        slot.resetBtn.textContent = originalText;
+      }, 900);
+    });
     slot.clearBtn.addEventListener('click', () => { slot.feedbackEl.innerText = ''; });
     slot.sendBtn.addEventListener('click', () => sendSlotCommand(slot));
     slot.cmdInput.addEventListener('keydown', (e) => {
@@ -969,7 +989,9 @@ function createControlElement(cfg){
       const cmd = cmdFormat.replace(/\{value\}/g, displayValue);  // e.g. "{value}" -> "42.00", "I{value}" -> "I42.00"
       if (sliderTimeout) clearTimeout(sliderTimeout);
       sliderTimeout = setTimeout(() => {
-        socket.emit('send_command', { cmd });
+        // cfg.portId locks this control to a specific board (e.g. a required
+        // control pinned to the Teacher MCU); blank = primary target, as before.
+        socket.emit('send_command', cfg.portId ? { cmd, conn_id: cfg.portId } : { cmd });
       }, 120);
     };
 
@@ -995,7 +1017,8 @@ else if(cfg.type === 'button'){
     toggled = !toggled;
     btn.style.opacity = toggled ? '0.7' : '1';
     const cmd = toggled ? onCmd : offCmd;
-    socket.emit('send_command', { cmd });  // ✅ sends only what you typed, e.g. "1" or "0"
+    // cfg.portId locks this control to a specific board; blank = primary target.
+    socket.emit('send_command', cfg.portId ? { cmd, conn_id: cfg.portId } : { cmd });  // ✅ sends only what you typed, e.g. "1" or "0"
   };
   content.appendChild(btn);
 }
@@ -1627,6 +1650,7 @@ function applyUiConfig(cfg) {
   setDisabled(document.getElementById('flashBtn'), !controls.flash_firmware);
   setDisabled(document.getElementById('firmwareInput'), !controls.flash_firmware);
   document.querySelectorAll('.slot-connect').forEach(btn => setDisabled(btn, !controls.serial_connect));
+  document.querySelectorAll('.slot-reset').forEach(btn => setDisabled(btn, !controls.serial_connect));
   setDisabled(document.getElementById('factoryResetBtn'), !controls.factory_reset);
   setDisabled(document.getElementById('powerSupplyBtn'), !controls.power_supply);
   setDisabled(document.getElementById('addSlider'), !controls.student_controls_addition);

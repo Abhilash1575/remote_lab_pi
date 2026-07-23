@@ -191,6 +191,21 @@ def delete_required_control(control_id):
     return _persist(cfg)
 
 
+def update_required_control(control_id, control):
+    """Update a required control in place, keeping its id — unlike delete+add,
+    this doesn't churn the id, so nothing referencing it needs to change."""
+    cfg = load_ui_config()
+    controls = cfg.setdefault('required_controls', [])
+    idx = next((i for i, c in enumerate(controls) if c.get('id') == control_id), None)
+    if idx is None:
+        return None
+    control = dict(control)
+    control['id'] = control_id
+    controls[idx] = control
+    _persist(cfg)
+    return control
+
+
 def add_serial_port(profile):
     cfg = load_ui_config()
     profile = dict(profile)
@@ -216,6 +231,28 @@ def delete_serial_port(port_id):
         remaining[0]['is_primary_target'] = True
     cfg['serial_ports'] = remaining
     return _persist(cfg)
+
+
+def update_serial_port(port_id, profile):
+    """Update a serial port profile in place, keeping its id — unlike delete+add,
+    this doesn't churn the id, so serial_plotter_default_port_id and any required
+    control's portId bound to it keep working without needing to be re-pointed."""
+    cfg = load_ui_config()
+    ports = cfg.setdefault('serial_ports', [])
+    idx = next((i for i, p in enumerate(ports) if p.get('id') == port_id), None)
+    if idx is None:
+        return None
+    profile = dict(profile)
+    profile['id'] = port_id
+    if profile.get('is_primary_target'):
+        for i, p in enumerate(ports):
+            if i != idx:
+                p['is_primary_target'] = False
+    ports[idx] = profile
+    if not any(p.get('is_primary_target') for p in ports):
+        ports[0]['is_primary_target'] = True
+    _persist(cfg)
+    return profile
 
 
 def is_control_enabled(key):

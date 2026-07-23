@@ -113,6 +113,18 @@ button{padding:9px 16px;border-radius:6px;border:none;cursor:pointer;background:
     </div>
   </form>
 
+  {% macro port_picker(field_id, current_value) %}
+  <div style="display:flex;gap:6px;flex:1;min-width:280px">
+    <select onchange="if(this.value) document.getElementById('{{ field_id }}').value = this.value;" style="width:130px;flex-shrink:0">
+      <option value="">(pick detected)</option>
+      {% for ap in available_ports %}
+      <option value="{{ ap.path }}" {{ 'selected' if ap.path == current_value }}>{{ ap.label }}{{ ' → ' + ap.resolved if ap.resolved }}</option>
+      {% endfor %}
+    </select>
+    <input type="text" id="{{ field_id }}" name="sp_port" value="{{ current_value }}" placeholder="or type a custom path" style="flex:1;min-width:150px">
+  </div>
+  {% endmacro %}
+
   <div class="card">
     <h2>Serial Ports</h2>
     <p class="sub">Define every MCU this Pi talks to — e.g. one port for a teacher-only readout board and another for the student-interactive board. Ports with "Student visible" off still connect and feed data in the background, but never show up in the student UI. Exactly one port should be the "Primary target" that slider/button commands are written to.</p>
@@ -120,14 +132,36 @@ button{padding:9px 16px;border-radius:6px;border:none;cursor:pointer;background:
 
     {% if cfg.serial_ports %}
       {% for p in cfg.serial_ports %}
-      <div class="row">
-        <label>
-          <strong>{{ p.label }}</strong>
-          <span class="note">({{ p.port or 'student picks port' }} @ {{ p.baud }}{{ ', primary target' if p.is_primary_target }}{{ ', hidden from students' if not p.student_visible }}{{ ', auto-connects' if p.auto_connect }}{{ ', disconnect locked' if not p.allow_disconnect }})</span>
-        </label>
-        <form method="post" action="{{ url_for('admin_delete_serial_port') }}" style="margin:0">
+      <div class="row" style="flex-direction:column;align-items:stretch">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+          <label>
+            <strong>{{ p.label }}</strong>
+            <span class="note">({{ p.port or 'student picks port' }} @ {{ p.baud }}{{ ', primary target' if p.is_primary_target }}{{ ', hidden from students' if not p.student_visible }}{{ ', auto-connects' if p.auto_connect }}{{ ', disconnect locked' if not p.allow_disconnect }})</span>
+          </label>
+          <div style="display:flex;gap:8px;flex-shrink:0">
+            <button type="button" onclick="toggleEdit('editPort_{{ p.id }}')" style="background:#3d3d52;color:#e0e0e0;padding:5px 10px;">Edit</button>
+            <form method="post" action="{{ url_for('admin_delete_serial_port') }}" style="margin:0">
+              <input type="hidden" name="port_id" value="{{ p.id }}">
+              <button type="submit" style="background:#ff6b6b;color:#101018;padding:5px 10px;">Remove</button>
+            </form>
+          </div>
+        </div>
+        <form id="editPort_{{ p.id }}" method="post" action="{{ url_for('admin_edit_serial_port') }}" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid #3d3d5233">
           <input type="hidden" name="port_id" value="{{ p.id }}">
-          <button type="submit" style="background:#ff6b6b;color:#101018;padding:5px 10px;">Remove</button>
+          <div class="row"><label>Label</label><input type="text" name="sp_label" value="{{ p.label }}" required style="width:160px"></div>
+          <div class="row"><label>Port (blank = student picks)</label>{{ port_picker('sp_port_edit_' + p.id, p.port) }}</div>
+          <div class="row"><label>Baud</label>
+            <select name="sp_baud" style="width:120px">
+              {% for b in [300, 1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200, 230400] %}
+              <option value="{{ b }}" {{ 'selected' if p.baud == b }}>{{ b }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="row"><label>Student visible</label><label class="switch"><input type="checkbox" name="sp_student_visible" {{ 'checked' if p.student_visible }}><span class="slider"></span></label></div>
+          <div class="row"><label>Auto-connect</label><label class="switch"><input type="checkbox" name="sp_auto_connect" {{ 'checked' if p.auto_connect }}><span class="slider"></span></label></div>
+          <div class="row"><label>Students can disconnect</label><label class="switch"><input type="checkbox" name="sp_allow_disconnect" {{ 'checked' if p.allow_disconnect }}><span class="slider"></span></label></div>
+          <div class="row"><label>Primary target (slider/button commands go here)</label><label class="switch"><input type="checkbox" name="sp_is_primary_target" {{ 'checked' if p.is_primary_target }}><span class="slider"></span></label></div>
+          <button type="submit" style="margin-top:10px">Save Changes</button>
         </form>
       </div>
       {% endfor %}
@@ -137,7 +171,8 @@ button{padding:9px 16px;border-radius:6px;border:none;cursor:pointer;background:
 
     <form method="post" action="{{ url_for('admin_add_serial_port') }}" style="margin-top:14px;border-top:1px solid #3d3d5233;padding-top:14px">
       <div class="row"><label for="sp_label">Label</label><input type="text" id="sp_label" name="sp_label" placeholder="e.g. Teacher MCU" required style="width:160px"></div>
-      <div class="row"><label for="sp_port">Port (blank = student picks)</label><input type="text" id="sp_port" name="sp_port" placeholder="e.g. /dev/ttyUSB0" style="width:160px"></div>
+      <div class="row"><label for="sp_port_new">Port (blank = student picks)</label>{{ port_picker('sp_port_new', '') }}</div>
+      <p class="note">The dropdown lists currently-detected <code>/dev/serial/by-id/...</code> paths — stable across reboots/replugs, unlike <code>/dev/ttyUSB0</code>/<code>/dev/ttyACM0</code> which are assigned by detection order. If a board doesn't show up (e.g. two identical boards whose chip has no unique serial, so only one gets a by-id entry), type a path manually — e.g. a <code>/dev/serial/by-path/...</code> one, stable as long as it stays in the same physical USB port.</p>
       <div class="row"><label for="sp_baud">Baud</label>
         <select id="sp_baud" name="sp_baud" style="width:120px">
           {% for b in [300, 1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200, 230400] %}
@@ -160,11 +195,49 @@ button{padding:9px 16px;border-radius:6px;border:none;cursor:pointer;background:
 
     {% if cfg.required_controls %}
       {% for c in cfg.required_controls %}
-      <div class="row">
-        <label>{{ c.label }} <span class="note">({{ c.type }}{{ ', ' + c.cmdFormat if c.type == 'slider' and c.cmdFormat }}{{ ', %s decimals' % c.precision if c.type == 'slider' and c.precision }}{% if c.type == 'readout' %}{% for p in cfg.serial_ports %}{% if p.id == c.portId %}, port: {{ p.label }}{% endif %}{% endfor %}{% if c.unit %}, unit: {{ c.unit }}{% endif %}{% endif %})</span></label>
-        <form method="post" action="{{ url_for('admin_delete_required_control') }}" style="margin:0">
+      <div class="row" style="flex-direction:column;align-items:stretch">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+          <label>{{ c.label }} <span class="note">({{ c.type }}{{ ', ' + c.cmdFormat if c.type == 'slider' and c.cmdFormat }}{{ ', %s decimals' % c.precision if c.type == 'slider' and c.precision }}{% for p in cfg.serial_ports %}{% if p.id == c.portId %}, port: {{ p.label }}{% endif %}{% endfor %}{% if c.type == 'readout' and c.unit %}, unit: {{ c.unit }}{% endif %})</span></label>
+          <div style="display:flex;gap:8px;flex-shrink:0">
+            <button type="button" onclick="toggleEdit('editRc_{{ c.id }}')" style="background:#3d3d52;color:#e0e0e0;padding:5px 10px;">Edit</button>
+            <form method="post" action="{{ url_for('admin_delete_required_control') }}" style="margin:0">
+              <input type="hidden" name="control_id" value="{{ c.id }}">
+              <button type="submit" style="background:#ff6b6b;color:#101018;padding:5px 10px;">Remove</button>
+            </form>
+          </div>
+        </div>
+        <form id="editRc_{{ c.id }}" method="post" action="{{ url_for('admin_edit_required_control') }}" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid #3d3d5233">
           <input type="hidden" name="control_id" value="{{ c.id }}">
-          <button type="submit" style="background:#ff6b6b;color:#101018;padding:5px 10px;">Remove</button>
+          <input type="hidden" name="rc_type" value="{{ c.type }}">
+          <div class="row"><label>Label</label><input type="text" name="rc_label" value="{{ c.label }}" required style="width:160px"></div>
+          <div class="row"><label>Port</label>
+            <select name="rc_port_id" style="width:160px">
+              <option value="">(default)</option>
+              {% for p in cfg.serial_ports %}
+              <option value="{{ p.id }}" {{ 'selected' if p.id == c.portId }}>{{ p.label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          {% if c.type == 'slider' %}
+          <div class="row"><label>Min</label><input type="number" step="any" name="rc_min" value="{{ c.min }}" style="width:100px"></div>
+          <div class="row"><label>Max</label><input type="number" step="any" name="rc_max" value="{{ c.max }}" style="width:100px"></div>
+          <div class="row"><label>Resolution</label>
+            <select name="rc_precision">
+              <option value="0" {{ 'selected' if c.precision == 0 }}>0 (whole numbers)</option>
+              <option value="1" {{ 'selected' if c.precision == 1 }}>0.0 (1 decimal)</option>
+              <option value="2" {{ 'selected' if c.precision == 2 }}>0.00 (2 decimals)</option>
+            </select>
+          </div>
+          <div class="row"><label>Command format</label><input type="text" name="rc_cmd_format" value="{{ c.cmdFormat }}" style="width:140px"></div>
+          {% elif c.type == 'button' %}
+          <div class="row"><label>On command</label><input type="text" name="rc_on_cmd" value="{{ c.onCmd }}" style="width:140px"></div>
+          <div class="row"><label>Off command</label><input type="text" name="rc_off_cmd" value="{{ c.offCmd }}" style="width:140px"></div>
+          {% elif c.type == 'readout' %}
+          <div class="row"><label>Data key</label><input type="text" name="rc_data_key" value="{{ c.dataKey }}" style="width:160px"></div>
+          <div class="row"><label>Unit (LaTeX)</label><input type="text" name="rc_unit" value="{{ c.unit }}" style="width:140px"></div>
+          <div class="row"><label>Decimals</label><input type="number" name="rc_decimals" value="{{ c.decimals }}" style="width:80px"></div>
+          {% endif %}
+          <button type="submit" style="margin-top:10px">Save Changes</button>
         </form>
       </div>
       {% endfor %}
@@ -185,6 +258,15 @@ button{padding:9px 16px;border-radius:6px;border:none;cursor:pointer;background:
         <label for="rc_label">Label</label>
         <input type="text" id="rc_label" name="rc_label" required>
       </div>
+      <div class="row"><label for="rc_port_id">Port</label>
+        <select id="rc_port_id" name="rc_port_id" style="width:160px">
+          <option value="">(default)</option>
+          {% for p in cfg.serial_ports %}
+          <option value="{{ p.id }}">{{ p.label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <p class="note">Which board this control talks to. "(default)" sends slider/button commands to the Primary target port, and matches a readout to the first port sending that data key. Set explicitly to lock a control to one board — e.g. a required slider pinned to the Teacher MCU, while a student's own added controls still go to their own board.</p>
       <div id="rc_fields_slider" class="rc-fields">
         <div class="row"><label for="rc_min">Min</label><input type="number" step="any" id="rc_min" name="rc_min" value="0" style="width:100px"></div>
         <div class="row"><label for="rc_max">Max</label><input type="number" step="any" id="rc_max" name="rc_max" value="1023" style="width:100px"></div>
@@ -204,17 +286,8 @@ button{padding:9px 16px;border-radius:6px;border:none;cursor:pointer;background:
       </div>
       <div id="rc_fields_readout" class="rc-fields" style="display:none">
         <div class="row"><label for="rc_data_key">Data key</label><input type="text" id="rc_data_key" name="rc_data_key" placeholder="e.g. temperature" style="width:160px"></div>
-        <div class="row"><label for="rc_port_id">Port</label>
-          <select id="rc_port_id" name="rc_port_id" style="width:160px">
-            <option value="">(any connected port)</option>
-            {% for p in cfg.serial_ports %}
-            <option value="{{ p.id }}">{{ p.label }}</option>
-            {% endfor %}
-          </select>
-        </div>
         <div class="row"><label for="rc_unit">Unit (LaTeX, e.g. <code>^\circ\text{C}</code>)</label><input type="text" id="rc_unit" name="rc_unit" placeholder="e.g. ^\circ\text{C}" style="width:140px"></div>
         <div class="row"><label for="rc_decimals">Decimals</label><input type="number" id="rc_decimals" name="rc_decimals" value="1" style="width:80px"></div>
-        <p class="note">Which port this readout listens on. Leave as "(any connected port)" to match the first port sending that data key (legacy behavior).</p>
       </div>
       <button type="submit" style="margin-top:10px">Add Control</button>
     </form>
@@ -236,6 +309,10 @@ button{padding:9px 16px;border-radius:6px;border:none;cursor:pointer;background:
   </div>
 </div>
 <script>
+function toggleEdit(id) {
+  const el = document.getElementById(id);
+  el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
 function updateRcFields() {
   const type = document.getElementById('rc_type').value;
   document.getElementById('rc_fields_slider').style.display = type === 'slider' ? 'block' : 'none';
