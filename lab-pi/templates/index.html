@@ -1246,6 +1246,11 @@ const chartCtx = document.getElementById('mainChart').getContext('2d');
 const visiblePoints = 50;
 const chartBuffer = [];
 let lastChartUpdate = 0;
+// Accumulated across messages (never shrinks except on port switch) so a single
+// payload that's transiently missing/invalid a field — e.g. while a slider-driven
+// value is changing — doesn't make the currently-plotted key look "gone" and
+// trigger a full chart reset. See the sensor_data handler below.
+const knownDataKeys = new Set();
 
 const chart = new Chart(chartCtx, {
   type: 'line',
@@ -1270,6 +1275,33 @@ const chart = new Chart(chartCtx, {
   }
 });
 
+// Y/Y1 max ease toward the visible-data target instead of snapping every
+// update, so a slider (e.g. a load control) that shifts the reported value
+// range doesn't look like the chart is resetting/recalibrating.
+let displayYMax = null, displayY1Max = null;
+const AXIS_EASE = 0.15;
+
+function easedMaxFor(values, current) {
+  const nums = values.filter(v => typeof v === 'number' && !isNaN(v));
+  if (!nums.length) return current;
+  const target = Math.max(0, ...nums) * 1.15 || 1;
+  if (current === null) return target;
+  const eased = current + (target - current) * AXIS_EASE;
+  return Math.abs(target - eased) < target * 0.01 ? target : eased;
+}
+
+function applyAutoScale() {
+  displayYMax = easedMaxFor(chart.data.datasets[0].data, displayYMax);
+  chart.options.scales.y.max = displayYMax;
+
+  if (!chart.data.datasets[1].hidden) {
+    displayY1Max = easedMaxFor(chart.data.datasets[1].data, displayY1Max);
+    chart.options.scales.y1.max = displayY1Max;
+  } else {
+    displayY1Max = null; // recompute fresh next time Series 2 is enabled
+  }
+}
+
 function chartLoop(){
   if(!running){ requestAnimationFrame(chartLoop); return; }
   const take = chartBuffer.splice(0, 5); // take more points per update
@@ -1284,6 +1316,7 @@ function chartLoop(){
     while(chart.data.labels.length > visiblePoints){
       chart.data.labels.shift(); chart.data.datasets[0].data.shift(); chart.data.datasets[1].data.shift();
     }
+    if (mainIsAutoScaling) applyAutoScale();
     chart.update('none');
     document.getElementById('chartStatus').innerText = `Running — last update: ${new Date().toLocaleTimeString()}`;
     lastChartUpdate = Date.now();
@@ -1302,6 +1335,8 @@ function updateChartConfig(){
     chart.data.labels = [];
     chart.data.datasets[0].data = [];
     chart.data.datasets[1].data = [];
+    displayYMax = null;
+    displayY1Max = null;
     lastSelectedKey1 = sel1;
   }
   const xAxisMode = xAxisFilter.value;
@@ -1398,22 +1433,23 @@ socket.on('sensor_data', (msg) => {
   // Auto-load saved layout after first sensor data arrives
   loadLayoutWhenReady();
 
-  // Get numeric keys from CURRENT data only
+  // Get numeric keys present in this message, then fold them into the
+  // accumulated set — a field missing from one message (e.g. mid-glitch,
+  // or while a slider-driven value is changing) shouldn't make it vanish
+  // from the dropdown and force a re-selection + chart reset.
   const numericKeys = Object.keys(payload).filter(k =>
     payload[k] !== null && payload[k] !== undefined &&
     !isNaN(Number(payload[k]))
   ).map(k => k.toLowerCase());
+  numericKeys.forEach(k => knownDataKeys.add(k));
 
-  // Update dropdown with current data keys only
-  updateYAxisFilterOptions(numericKeys);
+  // Update dropdown with the accumulated key set
+  updateYAxisFilterOptions(Array.from(knownDataKeys));
 
   // If dropdown is open, refresh it with new keys
   if(varDropdown.style.display === 'block'){
     showVarDropdown();
   }
-
-  // Update dropdown options
-  updateYAxisFilterOptions(numericKeys);
 
   // Auto-select axes immediately if empty
   let axesChanged = false;
@@ -1481,6 +1517,7 @@ socket.on('sensor_data', (msg) => {
 if (chartPortSelect) {
   chartPortSelect.addEventListener('change', () => {
     chartBuffer.length = 0;
+    knownDataKeys.clear();
     yAxisFilter1.value = '';
     yAxisFilter2.value = '';
     updateYAxisFilterOptions([]);
@@ -1939,6 +1976,8 @@ let mainIsAutoScaling = true;
 
 function mainUpdateScaling() {
   if (mainIsAutoScaling) {
+    displayYMax = null;
+    displayY1Max = null;
     delete chart.options.scales.y.max;
     delete chart.options.scales.y1.max;
   } else {
