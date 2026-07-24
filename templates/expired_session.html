@@ -76,8 +76,8 @@
         <div class="icon">⏰</div>
         <h1>Session Expired</h1>
         <p>{{ message | default('Your experiment session has ended. Thank you for using the Virtual Lab!') }}</p>
-        <a href="/" class="btn">Return to Lab Pi</a>
-        
+        <a href="{{ booking_page_url }}" class="btn">Return to My Bookings</a>
+
         {% if message %}
         <div class="timer">
             <p>Redirecting in <span id="countdown">5</span> seconds...</p>
@@ -88,7 +88,7 @@
                 count--;
                 document.getElementById('countdown').textContent = count;
                 if (count <= 0) {
-                    window.location.href = '/';
+                    window.location.href = '{{ booking_page_url }}';
                 }
             }, 1000);
         </script>

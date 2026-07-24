@@ -222,6 +222,14 @@ MASTER_URL = os.environ.get('MASTER_URL', 'http://192.168.1.5:5000').strip()
 HEARTBEAT_INTERVAL = 30  # seconds
 HEARTBEAT_RETRY = 5
 
+# Where "return to homepage" links should send students - the booking
+# portal lives on the Admin/Master Pi, not on this Lab Pi.
+BOOKING_PAGE_URL = f"{MASTER_URL}/my_bookings"
+
+@app.context_processor
+def inject_booking_page_url():
+    return {'booking_page_url': BOOKING_PAGE_URL}
+
 # Session tracking for heartbeat
 current_session_key = None
 
@@ -363,7 +371,6 @@ def send_heartbeat():
                                     pass
                             
                             # Create local session with board_type
-                            import time
                             active_sessions[session_key] = {
                                 'start_time': time.time(),
                                 'duration': duration,
@@ -1801,7 +1808,6 @@ def send_sensor_data_to_clients(conn_id, data):
                 conn = serial_connections.get(conn_id)
             port = conn['port'] if conn else None
             socketio.emit('sensor_data', {'conn_id': conn_id, 'port': port, 'data': data}, namespace='/')
-            print("[DEBUG] Emitted to clients:", conn_id, data)
     except Exception as e:
         print("[ERROR] Failed to emit sensor_data:", e)
 

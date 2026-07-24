@@ -3,6 +3,7 @@ import json
 import os
 import re
 import asyncio
+import functools
 import threading
 import subprocess
 import base64
@@ -96,6 +97,19 @@ async def _close_pc(session_id):
     if pc is not None:
         await pc.close()
 
+def _cleanup_late_player(future):
+    """If a MediaPlayer open finishes after we already gave up on it (see the
+    timeout in _handle_offer_async below), nobody holds a reference to stop
+    it -- which would leave the ALSA device open indefinitely. Release it."""
+    if future.cancelled() or future.exception() is not None:
+        return
+    late_player = future.result()
+    if late_player.audio is not None:
+        try:
+            late_player.audio.stop()
+        except Exception:
+            pass
+
 async def _handle_offer_async(session_id, sdp, type_):
     await _close_pc(session_id)
 
@@ -108,7 +122,26 @@ async def _handle_offer_async(session_id, sdp, type_):
         if pc.connectionState in ('failed', 'closed'):
             await _close_pc(session_id)
 
-    player = MediaPlayer(MIC_DEVICE, format='alsa')
+    # MediaPlayer(...) opens the ALSA device synchronously (blocking C I/O).
+    # There is exactly one _webrtc_loop thread serving every session's
+    # offers, so calling it directly here would stall ALL audio -- for
+    # every user -- for as long as the open takes, and indefinitely if the
+    # device hangs (e.g. held by another process). Running it in the
+    # executor keeps that block confined to a worker thread; wait_for +
+    # shield lets us give up on this request without killing the
+    # in-flight open (threads can't be preempted, so it keeps running
+    # regardless -- _cleanup_late_player releases it if it finishes late).
+    open_future = asyncio.get_running_loop().run_in_executor(
+        None, functools.partial(MediaPlayer, MIC_DEVICE, format='alsa')
+    )
+    try:
+        player = await asyncio.wait_for(asyncio.shield(open_future), timeout=8)
+    except asyncio.TimeoutError:
+        await pc.close()
+        peer_connections.pop(session_id, None)
+        open_future.add_done_callback(_cleanup_late_player)
+        raise RuntimeError(f'Timed out opening audio capture device "{MIC_DEVICE}" (busy or unavailable)')
+
     if player.audio is None:
         await pc.close()
         peer_connections.pop(session_id, None)

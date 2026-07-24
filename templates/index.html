@@ -83,7 +83,7 @@ button{padding:8px 10px;border-radius:6px;border:none;cursor:pointer}
 <div id="sessionClosed" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:#1c1c2b; color:#e0e0e0; z-index:9999; align-items:center; justify-content:center; flex-direction:column; font-size:2em;">
   <h2>Session Closed</h2>
   <p>Book another slot to continue.</p>
-  <button onclick="window.location.href='/'" style="padding:10px 20px; background:#00f0ff; color:#041726; border:none; border-radius:6px; font-weight:700;">Go to Homepage</button>
+  <button onclick="window.location.href='{{ booking_page_url }}'" style="padding:10px 20px; background:#00f0ff; color:#041726; border:none; border-radius:6px; font-weight:700;">Go to My Bookings</button>
 </div>
 
 <div class="container">
@@ -317,6 +317,7 @@ button{padding:8px 10px;border-radius:6px;border:none;cursor:pointer}
 const sessionDuration = {{ session_duration | tojson }};
 const sessionEndTimeFromServer = {{ session_end_time | tojson }};
 const boardTypeFromServer = {{ board_type | tojson }};
+const BOOKING_PAGE_URL = {{ booking_page_url | tojson }};
 const uiConfigFromServer = {{ ui_config | tojson }};
 console.log('[DEBUG] sessionDuration:', sessionDuration);
 console.log('[DEBUG] sessionEndTimeFromServer:', sessionEndTimeFromServer);
@@ -1276,53 +1277,79 @@ const chart = new Chart(chartCtx, {
   }
 });
 
-// Y/Y1 max ease toward the visible-data target instead of snapping every
+// Y/Y1 range eases toward the visible-data target instead of snapping every
 // update, so a slider (e.g. a load control) that shifts the reported value
 // range doesn't look like the chart is resetting/recalibrating.
-let displayYMax = null, displayY1Max = null;
+//
+// Both min AND max track the data (not just max against a fixed 0
+// baseline) — a series that never comes near zero (e.g. hovering around
+// 500) would otherwise get padded into a thin sliver at the top of an
+// axis stretching all the way down to 0.
+let displayYMin = null, displayYMax = null, displayY1Min = null, displayY1Max = null;
 const AXIS_EASE = 0.15;
 
-function easedMaxFor(values, current) {
+function easedAutoRange(values, prevMin, prevMax) {
   const nums = values.filter(v => typeof v === 'number' && !isNaN(v));
-  if (!nums.length) return current;
-  const target = Math.max(0, ...nums) * 1.15 || 1;
-  if (current === null) return target;
-  const eased = current + (target - current) * AXIS_EASE;
-  return Math.abs(target - eased) < target * 0.01 ? target : eased;
+  if (!nums.length) return prevMin === null ? null : { min: prevMin, max: prevMax };
+  const dataMin = Math.min(...nums), dataMax = Math.max(...nums);
+  const range = dataMax - dataMin;
+  const padding = range > 0 ? range * 0.15 : Math.max(Math.abs(dataMax) * 0.1, 1);
+  const targetMin = dataMin - padding, targetMax = dataMax + padding;
+  if (prevMin === null) return { min: targetMin, max: targetMax };
+  const easedMin = prevMin + (targetMin - prevMin) * AXIS_EASE;
+  const easedMax = prevMax + (targetMax - prevMax) * AXIS_EASE;
+  const settled = Math.abs(targetMin - easedMin) < (Math.abs(targetMin) || 1) * 0.01
+                && Math.abs(targetMax - easedMax) < (Math.abs(targetMax) || 1) * 0.01;
+  return settled ? { min: targetMin, max: targetMax } : { min: easedMin, max: easedMax };
 }
 
 function applyAutoScale() {
-  displayYMax = easedMaxFor(chart.data.datasets[0].data, displayYMax);
-  chart.options.scales.y.max = displayYMax;
+  const r0 = easedAutoRange(chart.data.datasets[0].data, displayYMin, displayYMax);
+  if (r0) {
+    displayYMin = r0.min; displayYMax = r0.max;
+    chart.options.scales.y.min = displayYMin;
+    chart.options.scales.y.max = displayYMax;
+  }
 
   if (!chart.data.datasets[1].hidden) {
-    displayY1Max = easedMaxFor(chart.data.datasets[1].data, displayY1Max);
-    chart.options.scales.y1.max = displayY1Max;
+    const r1 = easedAutoRange(chart.data.datasets[1].data, displayY1Min, displayY1Max);
+    if (r1) {
+      displayY1Min = r1.min; displayY1Max = r1.max;
+      chart.options.scales.y1.min = displayY1Min;
+      chart.options.scales.y1.max = displayY1Max;
+    }
   } else {
-    displayY1Max = null; // recompute fresh next time Series 2 is enabled
+    displayY1Min = null; displayY1Max = null; // recompute fresh next time Series 2 is enabled
   }
 }
 
 function chartLoop(){
-  if(!running){ requestAnimationFrame(chartLoop); return; }
-  const take = chartBuffer.splice(0, 5); // take more points per update
-  if(take.length && Date.now() - lastChartUpdate > 200){ // faster updates for smoother chart
-    const xAxisMode = xAxisFilter.value;
-    take.forEach(v => {
-      if (xAxisMode === 'time') chart.data.labels.push(new Date(v.ts).toLocaleTimeString('en-GB', { hour12: false }));
-      else chart.data.labels.push(v.sampleCount);
-      chart.data.datasets[0].data.push(v.value1 !== null ? v.value1 : NaN);
-      chart.data.datasets[1].data.push(v.value2 !== null ? v.value2 : NaN);
-    });
-    while(chart.data.labels.length > visiblePoints){
-      chart.data.labels.shift(); chart.data.datasets[0].data.shift(); chart.data.datasets[1].data.shift();
+  // Wrapped in try/finally so a transient issue (e.g. the page tearing
+  // down its DOM at session end) can't permanently kill this loop by
+  // throwing before the closing requestAnimationFrame call below.
+  try {
+    if(!running){ return; }
+    const take = chartBuffer.splice(0, 5); // take more points per update
+    if(take.length && Date.now() - lastChartUpdate > 200){ // faster updates for smoother chart
+      const xAxisMode = xAxisFilter.value;
+      take.forEach(v => {
+        if (xAxisMode === 'time') chart.data.labels.push(new Date(v.ts).toLocaleTimeString('en-GB', { hour12: false }));
+        else chart.data.labels.push(v.sampleCount);
+        chart.data.datasets[0].data.push(v.value1 !== null ? v.value1 : NaN);
+        chart.data.datasets[1].data.push(v.value2 !== null ? v.value2 : NaN);
+      });
+      while(chart.data.labels.length > visiblePoints){
+        chart.data.labels.shift(); chart.data.datasets[0].data.shift(); chart.data.datasets[1].data.shift();
+      }
+      if (mainIsAutoScaling) applyAutoScale();
+      chart.update('none');
+      const chartStatusEl = document.getElementById('chartStatus');
+      if (chartStatusEl) chartStatusEl.innerText = `Running — last update: ${new Date().toLocaleTimeString()}`;
+      lastChartUpdate = Date.now();
     }
-    if (mainIsAutoScaling) applyAutoScale();
-    chart.update('none');
-    document.getElementById('chartStatus').innerText = `Running — last update: ${new Date().toLocaleTimeString()}`;
-    lastChartUpdate = Date.now();
+  } finally {
+    requestAnimationFrame(chartLoop);
   }
-  requestAnimationFrame(chartLoop);
 }
 requestAnimationFrame(chartLoop);
 
@@ -1336,8 +1363,8 @@ function updateChartConfig(){
     chart.data.labels = [];
     chart.data.datasets[0].data = [];
     chart.data.datasets[1].data = [];
-    displayYMax = null;
-    displayY1Max = null;
+    displayYMin = null; displayYMax = null;
+    displayY1Min = null; displayY1Max = null;
     lastSelectedKey1 = sel1;
   }
   const xAxisMode = xAxisFilter.value;
@@ -1977,11 +2004,23 @@ let mainIsAutoScaling = true;
 
 function mainUpdateScaling() {
   if (mainIsAutoScaling) {
-    displayYMax = null;
-    displayY1Max = null;
+    // Wheel/pinch zoom (chartjs-plugin-zoom) writes its own min/max directly
+    // onto chart.options.scales.{y,y1} to reflect the zoomed view. resetZoom()
+    // clears that back to the chart's original config before applyAutoScale
+    // (called every chartLoop tick) takes over min/max again from the data.
+    chart.resetZoom();
+    displayYMin = null; displayYMax = null;
+    displayY1Min = null; displayY1Max = null;
+    delete chart.options.scales.y.min;
     delete chart.options.scales.y.max;
+    delete chart.options.scales.y1.min;
     delete chart.options.scales.y1.max;
   } else {
+    // Manual mode is a fixed 0-baseline gauge (user sets the ceiling only).
+    // Explicitly pin min back to 0 -- Auto mode's applyAutoScale may have
+    // left a non-zero min on these scales from the last fit.
+    chart.options.scales.y.min = 0;
+    chart.options.scales.y1.min = 0;
     chart.options.scales.y.max = Number(document.getElementById('mainY1Max').value);
     chart.options.scales.y1.max = Number(document.getElementById('mainY2Max').value);
   }
@@ -2053,11 +2092,11 @@ powerSavePopup.innerHTML = `
 document.body.appendChild(powerSavePopup);
 
 if (!sessionKey) {
-  document.body.innerHTML = '<div style="display:flex; align-items:center; justify-content:center; height:100vh; background:#1c1c2b; color:#e0e0e0; font-size:2em;">Invalid Session. Please book a slot from the homepage.<br><br><span style="font-size:0.5em;">Redirecting...</span></div><button onclick="window.location.href=\'/\'" style="padding:10px 20px; background:#00f0ff; color:#041726; border:none; border-radius:6px; font-weight:700;">Go to Homepage</button>';
+  document.body.innerHTML = '<div style="display:flex; align-items:center; justify-content:center; height:100vh; background:#1c1c2b; color:#e0e0e0; font-size:2em;">Invalid Session. Please book a slot from My Bookings.<br><br><span style="font-size:0.5em;">Redirecting...</span></div><button onclick="window.location.href=\'' + BOOKING_PAGE_URL + '\'" style="padding:10px 20px; background:#00f0ff; color:#041726; border:none; border-radius:6px; font-weight:700;">Go to My Bookings</button>';
   // Auto-redirect after 2 seconds
   setTimeout(function() {
     clearLayoutOnSessionEnd();
-    window.location.href = '/';
+    window.location.href = BOOKING_PAGE_URL;
   }, 2000);
 } else {
   // Check if session is already completed
@@ -2116,10 +2155,10 @@ if (!sessionKey) {
           body: JSON.stringify({ session_key: sessionKey })
         });
 
-        // Auto-redirect to homepage after 2 seconds
+        // Auto-redirect to My Bookings after 2 seconds
         setTimeout(() => {
           clearLayoutOnSessionEnd();
-          window.location.href = '/';
+          window.location.href = BOOKING_PAGE_URL;
         }, 2000);
       } else {
         setTimeout(updateTimer, 1000);
