@@ -29,6 +29,12 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
+# Resolve these up front so every later step (including the ustreamer build,
+# which cd's back into the project dir) can rely on them being set.
+PROJECT_DIR="$HOME/lab-pi"
+CURRENT_USER=$(whoami)
+CURRENT_HOME=$(eval echo ~"$CURRENT_USER")
+
 echo -e "${BLUE}========================================${NC}"
 echo -e "${BLUE}Virtual Lab - Lab Pi Setup${NC}"
 echo -e "${BLUE}========================================${NC}"
@@ -194,7 +200,6 @@ echo -e "${YELLOW}Step 5: DFRobot UPS will be installed after project setup...${
 # ============================================================================
 echo -e "${YELLOW}Step 6: Setting up project...${NC}"
 
-PROJECT_DIR="$HOME/lab-pi"
 if [ -d "$PROJECT_DIR" ]; then
     echo "Project directory already exists. Pulling latest changes..."
     cd "$PROJECT_DIR"
@@ -224,7 +229,12 @@ if [ "$(uname -m)" = "armv7l" ] || [ "$(uname -m)" = "aarch64" ]; then
         
         # Copy UPS script
         if [ -f "$PROJECT_DIR/install/rpi_dfrobot_ups_all_in_one.sh" ]; then
-            REAL_USER=$(whoami) bash "$PROJECT_DIR/install/rpi_dfrobot_ups_all_in_one.sh"
+            # Run in its own subshell so a failure here (e.g. no rpi-eeprom-config
+            # on this image, I2C not supported) can't abort the rest of this
+            # script via set -e — the venv, systemd services, etc. below are
+            # required, the UPS support is optional.
+            bash "$PROJECT_DIR/install/rpi_dfrobot_ups_all_in_one.sh" || \
+                echo -e "${YELLOW}⚠️ DFRobot UPS setup failed - continuing with remaining setup${NC}"
         else
             echo -e "${YELLOW}⚠️ DFRobot UPS script not found${NC}"
         fi
@@ -348,10 +358,6 @@ echo -e "${YELLOW}Step 9b: Setting up session poller service...${NC}"
 
 # Copy session poller files if they exist
 if [ -f "$PROJECT_DIR/lab_pi_session_poller.py" ]; then
-    # Get actual paths at install time
-    CURRENT_USER=$(whoami)
-    CURRENT_HOME=$(eval echo ~$CURRENT_USER)
-    
     # Create service file with resolved paths
     sudo tee /etc/systemd/system/lab_pi_session_poller.service > /dev/null << EOFSERVICE
 [Unit]
@@ -427,7 +433,6 @@ if [ -f "$PROJECT_DIR/systemd/dfrobot-ups.service" ]; then
     echo "Copied dfrobot-ups.service"
     
     # Update the service file with correct paths
-    CURRENT_HOME=$(eval echo ~$CURRENT_USER)
     sudo sed -i "s|%h|$CURRENT_HOME|g" /etc/systemd/system/dfrobot-ups.service
     sudo sed -i "s|%i|$CURRENT_USER|g" /etc/systemd/system/dfrobot-ups.service
     sudo chmod 644 /etc/systemd/system/dfrobot-ups.service
