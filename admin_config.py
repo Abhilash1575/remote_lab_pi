@@ -6,6 +6,7 @@ and which view loads by default. State persists in ui_config.json.
 """
 import os
 import json
+import secrets
 import time
 import uuid
 from functools import wraps
@@ -16,6 +17,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 UI_CONFIG_PATH = os.path.join(BASE_DIR, 'data', 'ui_config.json')
 ADMIN_PW_HASH_PATH = os.path.join(BASE_DIR, 'data', 'admin_password.hash')
+FLASK_SECRET_KEY_PATH = os.path.join(BASE_DIR, 'data', 'flask_secret_key')
 os.makedirs(os.path.dirname(UI_CONFIG_PATH), exist_ok=True)
 
 # Extensible registry: (key, label). Missing keys in an on-disk config
@@ -258,6 +260,28 @@ def update_serial_port(port_id, profile):
 
 def is_control_enabled(key):
     return load_ui_config().get('controls', {}).get(key, True)
+
+
+# ---------- flask secret key ----------
+
+def get_or_create_secret_key():
+    """Per-Pi Flask session-signing key. Reads FLASK_SECRET_KEY from the
+    environment if set (e.g. to pin the same key across a reinstall); otherwise
+    persists a randomly generated one to disk so it survives restarts but is
+    never the same value across two Pis, unlike a hardcoded key would be."""
+    env_key = os.environ.get('FLASK_SECRET_KEY')
+    if env_key:
+        return env_key
+    if os.path.isfile(FLASK_SECRET_KEY_PATH):
+        with open(FLASK_SECRET_KEY_PATH) as f:
+            key = f.read().strip()
+        if key:
+            return key
+    key = secrets.token_hex(32)
+    with open(FLASK_SECRET_KEY_PATH, 'w') as f:
+        f.write(key)
+    os.chmod(FLASK_SECRET_KEY_PATH, 0o600)
+    return key
 
 
 # ---------- password ----------

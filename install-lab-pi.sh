@@ -287,7 +287,7 @@ fi
 source venv/bin/activate
 pip install --upgrade pip
 # Install core dependencies one by one without av
-pip install Flask Flask-SocketIO Flask-SQLAlchemy Flask-Bcrypt Flask-Login Flask-Mail eventlet pyserial lgpio Werkzeug python-dateutil psutil smbus2 gpiozero requests pyaudio esptool aiohttp numpy python-dotenv greenlet || echo "Warning: Some dependencies failed to install."
+pip install Flask Flask-SocketIO Flask-SQLAlchemy Flask-Bcrypt Flask-Login Flask-Mail eventlet pyserial lgpio Werkzeug python-dateutil psutil smbus2 gpiozero requests pyaudio esptool aiohttp numpy scipy python-dotenv greenlet || echo "Warning: Some dependencies failed to install."
 # Try to install pre-built wheel first, otherwise build from source
 echo "Installing PyAudio for audio capture..."
 if ! pip show pyaudio >/dev/null 2>&1; then
@@ -319,7 +319,7 @@ pip install aioice cryptography google-crc32c pyee pylibsrtp pyopenssl || echo "
 
 # Install Python deps from root requirements.txt (which has all dependencies without av)
 echo "Installing other Python dependencies..."
-pip install --break-system-packages Flask Flask-SocketIO Flask-SQLAlchemy Flask-Bcrypt Flask-Login Flask-Mail eventlet pyserial lgpio Werkzeug python-dateutil psutil smbus2 gpiozero requests pyaudio esptool aiohttp numpy python-dotenv 2>/dev/null || pip install Flask Flask-SocketIO Flask-SQLAlchemy Flask-Bcrypt Flask-Login Flask-Mail eventlet pyserial lgpio Werkzeug python-dateutil psutil smbus2 gpiozero requests pyaudio esptool aiohttp numpy python-dotenv 2>/dev/null || echo "Warning: Some dependencies failed to install."
+pip install --break-system-packages Flask Flask-SocketIO Flask-SQLAlchemy Flask-Bcrypt Flask-Login Flask-Mail eventlet pyserial lgpio Werkzeug python-dateutil psutil smbus2 gpiozero requests pyaudio esptool aiohttp numpy scipy python-dotenv 2>/dev/null || pip install Flask Flask-SocketIO Flask-SQLAlchemy Flask-Bcrypt Flask-Login Flask-Mail eventlet pyserial lgpio Werkzeug python-dateutil psutil smbus2 gpiozero requests pyaudio esptool aiohttp numpy scipy python-dotenv 2>/dev/null || echo "Warning: Some dependencies failed to install."
 
 # ============================================================================
 # Step 7: Create Systemd Service

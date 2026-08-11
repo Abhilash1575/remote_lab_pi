@@ -39,7 +39,7 @@ import subprocess
 import eventlet
 eventlet.monkey_patch()
 
-import os, time, subprocess, threading, queue, tempfile, re, random, json, math, asyncio
+import os, time, subprocess, threading, queue, tempfile, re, random, json, math, asyncio, hmac
 import numpy as np
 from scipy.signal import medfilt, savgol_filter
 import requests
@@ -113,7 +113,7 @@ from werkzeug.utils import secure_filename
 from admin_config import (
     CONTROL_KEYS, get_effective_ui_config, get_student_ui_config, load_ui_config, save_ui_config,
     is_control_enabled, has_admin_password_configured, password_locked_by_env,
-    set_admin_password, verify_admin_password, admin_required,
+    set_admin_password, verify_admin_password, admin_required, get_or_create_secret_key,
     add_required_control, delete_required_control, update_required_control,
     add_serial_port, delete_serial_port, update_serial_port,
 )
@@ -128,7 +128,7 @@ os.makedirs(DEFAULT_FW_DIR, exist_ok=True)
 os.makedirs(SOP_DIR, exist_ok=True)
 
 app = Flask(__name__, template_folder='templates', static_folder='static')
-app.config['SECRET_KEY'] = 'devkey'
+app.config['SECRET_KEY'] = get_or_create_secret_key()
 socketio = SocketIO(app, async_mode='eventlet')
 
 # Global active sessions for authorization
@@ -219,8 +219,24 @@ LAB_PI_ID = os.environ.get('VLAB_PI_ID', 'Master')
 LAB_PI_NAME = os.environ.get('VLAB_PI_NAME', 'Lab Pi Node 1')
 LAB_PI_MAC = os.environ.get('VLAB_PI_MAC', '')
 MASTER_URL = os.environ.get('MASTER_URL', 'http://192.168.1.5:5000').strip()
+MASTER_API_KEY = os.environ.get('MASTER_API_KEY', '').strip()
 HEARTBEAT_INTERVAL = 30  # seconds
 HEARTBEAT_RETRY = 5
+
+
+def _verify_master_request():
+    """Confirm a POST to one of the /api/lab-pi/* command endpoints really came
+    from the Admin/Master Pi (which must send the same MASTER_API_KEY back in an
+    X-Master-Api-Key header), not just anyone on the network who knows the URL.
+    If MASTER_API_KEY isn't configured on this Pi yet, allow through (matches
+    today's behavior) but warn loudly — once it's set, enforcement is automatic."""
+    if not MASTER_API_KEY:
+        print("[SECURITY] MASTER_API_KEY is not set in .env — /api/lab-pi/* command "
+              "endpoints are accepting unauthenticated requests. Set MASTER_API_KEY "
+              "(and have the Admin Pi send it in an X-Master-Api-Key header) to close this.")
+        return True
+    provided = request.headers.get('X-Master-Api-Key', '')
+    return hmac.compare_digest(provided, MASTER_API_KEY)
 
 # Where "return to homepage" links should send students - the booking
 # portal lives on the Admin/Master Pi, not on this Lab Pi.
@@ -337,7 +353,7 @@ def send_heartbeat():
         'battery_charging': charging
     }
     
-    headers = {'X-Lab-Pi-Id': LAB_PI_ID}
+    headers = {'X-Lab-Pi-Id': LAB_PI_ID, 'X-Master-Api-Key': MASTER_API_KEY}
     
     for attempt in range(HEARTBEAT_RETRY):
         try:
@@ -441,7 +457,7 @@ def register_with_master():
         'location': os.environ.get('LOCATION', '')
     }
     
-    headers = {'X-Lab-Pi-Id': LAB_PI_ID}
+    headers = {'X-Lab-Pi-Id': LAB_PI_ID, 'X-Master-Api-Key': MASTER_API_KEY}
     
     for attempt in range(HEARTBEAT_RETRY):
         try:
@@ -780,8 +796,10 @@ def api_lab_pi_session_start():
     Receive session start command from Admin Pi (Master).
     Called when a user starts an experiment session.
     """
+    if not _verify_master_request():
+        return jsonify({'error': 'unauthorized'}), 401
     global current_session_key
-    
+
     data = request.get_json()
     session_key = data.get('session_key')
     booking_id = data.get('booking_id')
@@ -832,8 +850,10 @@ def api_lab_pi_session_end():
     Receive session end command from Admin Pi (Master).
     Called when a session is terminated or expires.
     """
+    if not _verify_master_request():
+        return jsonify({'error': 'unauthorized'}), 401
     global current_session_key
-    
+
     data = request.get_json()
     session_key = data.get('session_key')
     
@@ -853,6 +873,8 @@ def api_lab_pi_update_config():
     Receive real-time configuration updates from Admin Pi.
     Used for instant board_type, experiment, and SOP updates without service restart.
     """
+    if not _verify_master_request():
+        return jsonify({'error': 'unauthorized'}), 401
     data = request.get_json()
     
     # Update board_type if provided
@@ -1252,10 +1274,32 @@ def ports_rest():
     return jsonify({'ports': list_serial_ports()})
 
 # ---------- FLASH ----------
+def _flash_commands(board, port, fw_path):
+    """Argv lists (never a shell string) for each board's flash command, so
+    `port` — which comes straight from the client — can never be parsed as
+    shell syntax no matter what a caller puts in it."""
+    python_exec = sys.executable
+    return {
+        'esp32': [python_exec, '-m', 'esptool', '--chip', 'esp32', '--port', port, '--baud', '115200', '--before', 'default_reset', 'write_flash', '0x10000', fw_path],
+        'esp8266': [python_exec, '-m', 'esptool', '--chip', 'esp8266', '--port', port, '--baud', '115200', '--before', 'default_reset', 'write_flash', '0x00000', fw_path],
+        'arduino': ['avrdude', '-v', '-p', 'atmega328p', '-c', 'arduino', '-P', port, '-b115200', '-D', '-U', f'flash:w:{fw_path}:i'],
+        'attiny': ['avrdude', '-v', '-p', 'attiny85', '-c', 'usbasp', '-P', port, '-U', f'flash:w:{fw_path}:i'],
+        'stm32': ['openocd', '-f', 'interface/stlink.cfg', '-f', 'target/stm32f4x.cfg', '-c', f'program {fw_path} 0x08000000 verify reset exit'],
+        'nucleo_f446re': ['openocd', '-f', 'interface/stlink.cfg', '-f', 'target/stm32f4x.cfg', '-c', f'program {fw_path} 0x08000000 verify reset exit'],
+        'black_pill': ['openocd', '-f', 'interface/stlink.cfg', '-f', 'target/stm32f4x.cfg', '-c', f'program {fw_path} 0x08000000 verify reset exit'],
+        'msp430': ['mspdebug', 'rf2500', f'prog {fw_path}'],
+        'tiva': ['openocd', '-f', 'board/ti_ek-tm4c123gxl.cfg', '-c', f'program {fw_path} verify reset exit'],
+        'tms320f28377s': ['python3', 'dsp/flash_tool.py', fw_path],
+        'generic': ['echo', f'No flashing command configured for {board}. Firmware at {fw_path}'],
+    }
+
+
 @app.route('/flash', methods=['POST'])
 def flash():
     if not is_control_enabled('flash_firmware'):
         return jsonify({'status': 'error', 'message': 'Flash Firmware is disabled for this session'}), 403
+    if current_session_key is None:
+        return jsonify({'status': 'error', 'message': 'No active experiment session'}), 403
     board = request.form.get('board', 'generic')
     if not is_control_enabled('board_select'):
         board = current_board_type or board
@@ -1269,31 +1313,15 @@ def flash():
     dest = os.path.join(UPLOAD_DIR, fname)
     fw.save(dest)
 
-    # Use sys.executable to ensure we use the venv's Python (which has esptool installed)
-    # This avoids PATH issues and ensures we use the correct esptool
-    python_exec = sys.executable
-    commands = {
-        'esp32': f"{python_exec} -m esptool --chip esp32 --port {port} --baud 115200 --before default_reset write_flash 0x10000 {dest}",
-        'esp8266': f"{python_exec} -m esptool --chip esp8266 --port {port} --baud 115200 --before default_reset write_flash 0x00000 {dest}",
-        'arduino': f"avrdude -v -p atmega328p -c arduino -P {port} -b115200 -D -U flash:w:{dest}:i",
-        'attiny': f"avrdude -v -p attiny85 -c usbasp -P {port} -U flash:w:{dest}:i",
-        'stm32': f"openocd -f interface/stlink.cfg -f target/stm32f4x.cfg -c \"program {dest} 0x08000000 verify reset exit\"",
-        'nucleo_f446re': f"openocd -f interface/stlink.cfg -f target/stm32f4x.cfg -c \"program {dest} 0x08000000 verify reset exit\"",
-        'black_pill': f"openocd -f interface/stlink.cfg -f target/stm32f4x.cfg -c \"program {dest} 0x08000000 verify reset exit\"",
-        'msp430': f"mspdebug rf2500 'prog {dest}'",
-        'tiva': f"openocd -f board/ti_ek-tm4c123gxl.cfg -c \"program {dest} verify reset exit\"",
-        'tms320f28377s': f"python3 dsp/flash_tool.py {dest}",
-        'generic': f"echo 'No flashing command configured for {board}. Uploaded to {dest}'"
-    }
-
+    commands = _flash_commands(board, port, dest)
     cmd = commands.get(board, commands['generic'])
     socketio.start_background_task(run_flash_command, cmd, fname)
-    return jsonify({'status': f'Flashing started for {board}', 'command': cmd})
+    return jsonify({'status': f'Flashing started for {board}', 'command': ' '.join(cmd)})
 
 def run_flash_command(cmd, filename=None):
     try:
-        socketio.emit('flashing_status', f"Starting: {cmd}")
-        p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        socketio.emit('flashing_status', f"Starting: {' '.join(cmd)}")
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         for line in iter(p.stdout.readline, ''):
             if line is None:
                 continue
@@ -1312,6 +1340,8 @@ def run_flash_command(cmd, filename=None):
 def factory_reset():
     if not is_control_enabled('factory_reset'):
         return jsonify({'error': 'Factory Reset is disabled for this session'}), 403
+    if current_session_key is None:
+        return jsonify({'error': 'No active experiment session'}), 403
     try:
         data = request.get_json(force=True)
     except:
@@ -1344,24 +1374,10 @@ def factory_reset():
     port, port_err = _resolved_flash_port(data.get('port'))
     if port_err:
         return jsonify({'error': port_err}), 400
-    # Use sys.executable to ensure we use the venv's Python (which has esptool installed)
-    python_exec = sys.executable
-    commands = {
-        'esp32': f"{python_exec} -m esptool --chip esp32 --port {port} --baud 115200 --before default_reset write_flash 0x10000 {fpath}",
-        'esp8266': f"{python_exec} -m esptool --chip esp8266 --port {port} --baud 115200 --before default_reset write_flash 0x00000 {fpath}",
-        'arduino': f"avrdude -v -p atmega328p -c arduino -P {port} -b115200 -D -U flash:w:{fpath}:i",
-        'attiny': f"avrdude -v -p attiny85 -c usbasp -P {port} -U flash:w:{fpath}:i",
-        'stm32': f"openocd -f interface/stlink.cfg -f target/stm32f4x.cfg -c \"program {fpath} 0x08000000 verify reset exit\"",
-        'nucleo_f446re': f"openocd -f interface/stlink.cfg -f target/stm32f4x.cfg -c \"program {fpath} 0x08000000 verify reset exit\"",
-        'black_pill': f"openocd -f interface/stlink.cfg -f target/stm32f4x.cfg -c \"program {fpath} 0x08000000 verify reset exit\"",
-        'msp430': f"mspdebug rf2500 'prog {fpath}'",
-        'tiva': f"openocd -f board/ti_ek-tm4c123gxl.cfg -c \"program {fpath} verify reset exit\"",
-        'tms320f28377s': f"python3 dsp/flash_tool.py {fpath}",
-        'generic': f"echo 'No flashing command configured for {board}. Default firmware at {fpath}'"
-    }
+    commands = _flash_commands(board, port, fpath)
     cmd = commands.get(board, commands['generic'])
     socketio.start_background_task(run_flash_command, cmd, fname)
-    return jsonify({'status': f'Factory reset started for {board}', 'command': cmd})
+    return jsonify({'status': f'Factory reset started for {board}', 'command': ' '.join(cmd)})
 
 # ---------- SOP DOWNLOAD ----------
 # Serve SOP file(s) from static/sop directory. Example: GET /sop/exp.pdf
