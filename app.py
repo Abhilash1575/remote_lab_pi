@@ -1250,6 +1250,18 @@ def api_latest_sensor_data():
     """Return latest sensor data for CRO page polling"""
     return jsonify(latest_sensor_data)
 
+@app.route('/api/ui-config')
+def api_ui_config():
+    """The admin-configured UI restrictions (which controls/boards are
+    enabled, serial port profiles, required controls, experiment name) as
+    JSON, so the Master PC can render this Lab Pi's real experiment page
+    instead of this Lab Pi doing it. Master-only — never a browser, since
+    get_student_ui_config() is what's safe to hand to a student's page, but
+    the fetch itself should only ever be made server-side by the Master."""
+    if not _verify_master_request():
+        return jsonify({'error': 'unauthorized'}), 401
+    return jsonify(get_student_ui_config())
+
 @app.route('/camera')
 def camera():
     # Clean up expired sessions
