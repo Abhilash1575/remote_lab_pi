@@ -416,11 +416,14 @@ sudo systemctl daemon-reload
 # Enable and start services
 echo "Enabling video streaming service..."
 sudo systemctl enable mjpg-streamer.service 2>/dev/null || true
-sudo systemctl start mjpg-streamer.service 2>/dev/null || true
+# restart (not start) so re-running this script after a git pull actually
+# picks up new code -- start is a no-op on an already-running service, which
+# leaves it running deleted files indefinitely after a refactor/upgrade.
+sudo systemctl restart mjpg-streamer.service 2>/dev/null || true
 
 echo "Enabling audio streaming service..."
 sudo systemctl enable audio_stream.service 2>/dev/null || true
-sudo systemctl start audio_stream.service 2>/dev/null || true
+sudo systemctl restart audio_stream.service 2>/dev/null || true
 
 # ============================================================================
 # Step 12: Install DFRobot UPS Service
@@ -440,7 +443,7 @@ if [ -f "$PROJECT_DIR/systemd/dfrobot-ups.service" ]; then
     # Enable and start UPS service
     sudo systemctl daemon-reload
     sudo systemctl enable dfrobot-ups.service 2>/dev/null || true
-    sudo systemctl start dfrobot-ups.service 2>/dev/null || true
+    sudo systemctl restart dfrobot-ups.service 2>/dev/null || true
     echo "UPS monitoring service enabled"
 else
     echo "Warning: dfrobot-ups.service not found"
