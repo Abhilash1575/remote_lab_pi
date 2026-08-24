@@ -1070,6 +1070,12 @@ def admin_delete_required_control():
         socketio.emit('ui_config_updated', get_student_ui_config())
     return redirect(url_for('admin_settings'))
 
+def _truthy(value):
+    """True for an HTML checkbox's 'on' (request.form) or a real JSON boolean
+    (request.get_json(), from the Master's admin API) — same field, two callers."""
+    return value in ('on', True)
+
+
 def _serial_port_profile_from_form(form):
     try:
         baud = int(form.get('sp_baud', 115200))
@@ -1079,18 +1085,22 @@ def _serial_port_profile_from_form(form):
         'label': (form.get('sp_label') or '').strip(),
         'port': (form.get('sp_port') or '').strip(),
         'baud': baud,
-        'student_visible': form.get('sp_student_visible') == 'on',
-        'auto_connect': form.get('sp_auto_connect') == 'on',
-        'allow_disconnect': form.get('sp_allow_disconnect') == 'on',
-        'is_primary_target': form.get('sp_is_primary_target') == 'on',
+        'student_visible': _truthy(form.get('sp_student_visible')),
+        'auto_connect': _truthy(form.get('sp_auto_connect')),
+        'allow_disconnect': _truthy(form.get('sp_allow_disconnect')),
+        'is_primary_target': _truthy(form.get('sp_is_primary_target')),
     }
 
 
-def _osc_port_conflict_response(port_value):
+def _osc_port_conflicts(port_value):
     # The Oscilloscope owns its own auto-detected port and is never something
     # students connect to or reconfigure via Serial Monitor/Plotter — reject
     # any profile that would collide with it instead of silently failing later.
-    if not (port_value and OSC_PORT and port_value == OSC_PORT):
+    return bool(port_value and OSC_PORT and port_value == OSC_PORT)
+
+
+def _osc_port_conflict_response(port_value):
+    if not _osc_port_conflicts(port_value):
         return None
     cfg = get_effective_ui_config()
     return render_template(
@@ -1139,6 +1149,126 @@ def admin_delete_serial_port():
         socketio.emit('ui_config_updated', get_student_ui_config())
         sync_serial_profiles()
     return redirect(url_for('admin_settings'))
+
+
+# ---------- MASTER-FACING ADMIN CONFIG API (Tier A — X-Master-Api-Key only) ----------
+# JSON equivalents of the /admin/settings* HTML routes above, so the Master PC's
+# admin console can edit this Lab Pi's UI/layout config without an admin ever
+# visiting this Pi's own IP. Never called by a browser — see LAB_PI_API_CONTRACT.md §5.
+
+@app.route('/api/admin/ui-config', methods=['GET'])
+def api_admin_get_ui_config():
+    if not _verify_master_request():
+        return jsonify({'error': 'unauthorized'}), 401
+    cfg = get_effective_ui_config()
+    cfg['control_keys'] = [{'key': key, 'label': label} for key, label in CONTROL_KEYS]
+    cfg['available_ports'] = list_admin_port_choices()
+    return jsonify(cfg)
+
+
+@app.route('/api/admin/ui-config', methods=['POST'])
+def api_admin_save_ui_config():
+    if not _verify_master_request():
+        return jsonify({'error': 'unauthorized'}), 401
+    data = request.get_json() or {}
+    new_controls = {key: bool(data.get('controls', {}).get(key, True)) for key, _ in CONTROL_KEYS}
+    defaults = data.get('defaults', {}) or {}
+    main_view = defaults.get('main_view')
+    if main_view not in ('plotter', 'oscilloscope'):
+        main_view = 'plotter'
+    required_prefixes = [kw.strip() for kw in defaults.get('serial_plotter_required_prefixes', []) if str(kw).strip()]
+    new_defaults = {
+        'main_view': main_view,
+        'dynamic_controls_visible': bool(defaults.get('dynamic_controls_visible')),
+        'serial_plotter_allow_port_switch': bool(defaults.get('serial_plotter_allow_port_switch')),
+        'serial_plotter_default_port_id': (defaults.get('serial_plotter_default_port_id') or '').strip(),
+        'serial_plotter_required_prefixes': required_prefixes,
+    }
+    experiment_name = (data.get('experiment_name') or '').strip()
+    cfg = save_ui_config(new_controls, new_defaults, experiment_name=experiment_name)
+    socketio.emit('ui_config_updated', get_student_ui_config())
+    sync_serial_profiles()
+    return jsonify(cfg)
+
+
+@app.route('/api/admin/controls', methods=['POST'])
+def api_admin_add_control():
+    if not _verify_master_request():
+        return jsonify({'error': 'unauthorized'}), 401
+    control = _required_control_from_form(request.get_json() or {})
+    if not control:
+        return jsonify({'error': 'invalid control'}), 400
+    control = add_required_control(control)
+    socketio.emit('ui_config_updated', get_student_ui_config())
+    return jsonify(control)
+
+
+@app.route('/api/admin/controls/<control_id>', methods=['PUT'])
+def api_admin_edit_control(control_id):
+    if not _verify_master_request():
+        return jsonify({'error': 'unauthorized'}), 401
+    control = _required_control_from_form(request.get_json() or {})
+    if not control:
+        return jsonify({'error': 'invalid control'}), 400
+    updated = update_required_control(control_id, control)
+    if updated is None:
+        return jsonify({'error': 'not found'}), 404
+    socketio.emit('ui_config_updated', get_student_ui_config())
+    return jsonify(updated)
+
+
+@app.route('/api/admin/controls/<control_id>', methods=['DELETE'])
+def api_admin_delete_control(control_id):
+    if not _verify_master_request():
+        return jsonify({'error': 'unauthorized'}), 401
+    delete_required_control(control_id)
+    socketio.emit('ui_config_updated', get_student_ui_config())
+    return jsonify({'status': 'success'})
+
+
+@app.route('/api/admin/ports', methods=['POST'])
+def api_admin_add_port():
+    if not _verify_master_request():
+        return jsonify({'error': 'unauthorized'}), 401
+    profile = _serial_port_profile_from_form(request.get_json() or {})
+    if not profile['label']:
+        return jsonify({'error': 'label is required'}), 400
+    if _osc_port_conflicts(profile['port']):
+        return jsonify({'error': f'{profile["port"]} is the Oscilloscope\'s port (auto-detected) and cannot be reused here.'}), 400
+    profile = add_serial_port(profile)
+    socketio.emit('ui_config_updated', get_student_ui_config())
+    sync_serial_profiles()
+    return jsonify(profile)
+
+
+@app.route('/api/admin/ports/<port_id>', methods=['PUT'])
+def api_admin_edit_port(port_id):
+    if not _verify_master_request():
+        return jsonify({'error': 'unauthorized'}), 401
+    profile = _serial_port_profile_from_form(request.get_json() or {})
+    if not profile['label']:
+        return jsonify({'error': 'label is required'}), 400
+    if _osc_port_conflicts(profile['port']):
+        return jsonify({'error': f'{profile["port"]} is the Oscilloscope\'s port (auto-detected) and cannot be reused here.'}), 400
+    updated = update_serial_port(port_id, profile)
+    if updated is None:
+        return jsonify({'error': 'not found'}), 404
+    # Port/baud may have changed under the same id — force a reconnect with
+    # the new settings instead of leaving a stale connection open.
+    _close_connection(port_id)
+    socketio.emit('ui_config_updated', get_student_ui_config())
+    sync_serial_profiles()
+    return jsonify(updated)
+
+
+@app.route('/api/admin/ports/<port_id>', methods=['DELETE'])
+def api_admin_delete_port(port_id):
+    if not _verify_master_request():
+        return jsonify({'error': 'unauthorized'}), 401
+    delete_serial_port(port_id)
+    socketio.emit('ui_config_updated', get_student_ui_config())
+    sync_serial_profiles()
+    return jsonify({'status': 'success'})
 
 @app.route('/test_gpio', methods=['GET'])
 def test_gpio():
