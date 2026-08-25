@@ -162,9 +162,17 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))  # base path relative to s
 UPLOAD_DIR = os.path.join(BASE_DIR, 'data', 'uploads')
 DEFAULT_FW_DIR = os.path.join(BASE_DIR, 'data', 'default_fw')  # contains esp32_default.bin etc
 SOP_DIR = os.path.join(BASE_DIR, 'data', 'sop')      # contains exp.pdf
+# Debug symbols (.elf) live separately from UPLOAD_DIR's flashed .bin/.hex/etc
+# -- flashing never produces or needs an ELF, so this is always a distinct
+# upload. A single fixed filename is fine: like every other debug session
+# global here (_debug_gdb, active_sessions), a Lab Pi only ever serves one
+# active booking at a time.
+DEBUG_UPLOAD_DIR = os.path.join(BASE_DIR, 'data', 'debug_uploads')
+DEBUG_ELF_PATH = os.path.join(DEBUG_UPLOAD_DIR, 'firmware.elf')
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(DEFAULT_FW_DIR, exist_ok=True)
 os.makedirs(SOP_DIR, exist_ok=True)
+os.makedirs(DEBUG_UPLOAD_DIR, exist_ok=True)
 
 app = Flask(__name__, template_folder='templates', static_folder='static')
 app.config['SECRET_KEY'] = get_or_create_secret_key()
@@ -1518,6 +1526,25 @@ def flash():
     socketio.start_background_task(run_flash_command, cmd, fname)
     return jsonify({'status': f'Flashing started for {board}', 'command': ' '.join(cmd)})
 
+
+@app.route('/debug/upload-elf', methods=['POST'])
+def debug_upload_elf():
+    """Save the ELF a student uploads for GDB symbol/source-level debugging.
+    Deliberately never accepts a filesystem path from the browser (see
+    handle_debug_load_symbols) -- students have no visibility into this Pi's
+    filesystem, so the only path a session ever debugs against is this fixed
+    one, written here from an actual upload."""
+    if current_session_key is None:
+        return jsonify({'status': 'No active experiment session'}), 403
+    elf = request.files.get('elf')
+    if not elf or not elf.filename:
+        return jsonify({'status': 'No ELF file uploaded'}), 400
+    if not elf.filename.lower().endswith(('.elf', '.out')):
+        return jsonify({'status': 'Expected a .elf (or .out) file with debug symbols'}), 400
+    elf.save(DEBUG_ELF_PATH)
+    return jsonify({'status': 'ok', 'filename': secure_filename(elf.filename)})
+
+
 def run_flash_command(cmd, filename=None):
     try:
         socketio.emit('flashing_status', f"Starting: {' '.join(cmd)}")
@@ -2108,15 +2135,18 @@ def handle_debug_stop(data=None):
 
 
 @socketio.on('debug_load_symbols')
-def handle_debug_load_symbols(data):
-    data = data or {}
+def handle_debug_load_symbols(data=None):
+    # Always the fixed path from debug_upload_elf() -- never a client-supplied
+    # path (students have no visibility into this Pi's filesystem to type one).
     if _debug_gdb is None:
         emit('debug_event', {'event': 'error', 'message': 'No active debug session'})
         return
-    elf_path = data.get('elf_path')
+    if not os.path.isfile(DEBUG_ELF_PATH):
+        emit('debug_event', {'event': 'error', 'message': 'No ELF uploaded yet -- choose one in the Symbols section first'})
+        return
     try:
-        _debug_gdb.load_symbols(elf_path)
-        emit('debug_event', {'event': 'console', 'text': f'symbols loaded from {elf_path}\n'})
+        _debug_gdb.load_symbols(DEBUG_ELF_PATH)
+        emit('debug_event', {'event': 'console', 'text': 'symbols loaded\n'})
     except Exception as e:
         emit('debug_event', {'event': 'error', 'message': f'failed to load symbols: {e}'})
 

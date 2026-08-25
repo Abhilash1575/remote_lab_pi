@@ -31,6 +31,7 @@ else to forward).
 from __future__ import annotations
 
 import itertools
+import shutil
 from typing import Any, Callable
 
 import eventlet
@@ -40,6 +41,24 @@ from pygdbmi.gdbcontroller import GdbController
 from .boards import BoardProfile
 
 REGISTER_TIMEOUT = 5.0
+
+# A board profile's gdb_binary is a preference, not a hard requirement --
+# most Lab Pi images already have one of these from whatever toolchain was
+# used to build/flash the firmware, even if not the exact name a profile
+# asks for. Tried in this order after the profile's own choice.
+_GDB_FALLBACKS = ["gdb-multiarch", "arm-none-eabi-gdb", "gdb"]
+
+
+def _resolve_gdb_binary(preferred: str) -> str:
+    candidates = [preferred] + [c for c in _GDB_FALLBACKS if c != preferred]
+    for candidate in candidates:
+        if shutil.which(candidate):
+            return candidate
+    raise RuntimeError(
+        f"no usable GDB binary found on this Lab Pi (tried: {', '.join(candidates)}). "
+        "Install one, e.g. `sudo apt install gdb-multiarch` or "
+        "`sudo apt install gdb-arm-none-eabi` (Debian/Raspberry Pi OS)."
+    )
 
 
 class GdbCommandTimeout(RuntimeError):
@@ -57,8 +76,9 @@ class GdbSession:
         # booking's browser actually listening (see current_session_key).
         self._on_event = on_event
 
+        gdb_binary = _resolve_gdb_binary(board.gdb_binary)
         self._controller = GdbController(
-            command=[board.gdb_binary, "--nx", "--quiet", "--interpreter=mi3"]
+            command=[gdb_binary, "--nx", "--quiet", "--interpreter=mi3"]
         )
         self._token_counter = itertools.count(1)
         self._pending: dict[int, Event] = {}
