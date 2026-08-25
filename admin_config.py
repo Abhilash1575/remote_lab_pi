@@ -46,6 +46,22 @@ DEFAULT_UI_CONFIG = {
         # parsed as plotter data. Empty list = no requirement, any line with
         # a separator + digit is parsed (original behavior).
         'serial_plotter_required_prefixes': [],
+        # Which debug/boards.py profile 'debug_start' should use, overriding
+        # the LabPi.board_type-derived default sent by the browser -- needed
+        # once a Pi could plausibly have more than one debug-capable target.
+        # Blank = fall back to whatever the browser sends.
+        'debug_board_id': '',
+        # A /dev/serial/by-id/... path identifying which attached probe to
+        # debug, so multiple debug-capable boards on one Pi don't collide.
+        # Blank = let OpenOCD pick whichever probe it finds.
+        'debug_port': '',
+        # Informational only -- which MCU the oscilloscope firmware runs on.
+        'osc_board_id': '',
+        # A /dev/serial/by-id/... path to force as the Oscilloscope's port,
+        # bypassing the VID/PID auto-scan. Blank = auto-detect (original
+        # behavior). Fixes ambiguity when a debug probe or another board
+        # shares a VID/PID with the whitelist in OSC_KNOWN_VID_PID.
+        'osc_port': '',
     },
     'required_controls': [],
     # Each entry: {id, label, port, baud, student_visible, auto_connect,

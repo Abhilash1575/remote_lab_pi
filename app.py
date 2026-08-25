@@ -87,15 +87,39 @@ OSC_KNOWN_VID_PID = [
     (0x1a86, 0x7523),  # legacy ESP32/Arduino: CH340
 ]
 
+def _osc_port_override():
+    """Admin-configured override (a /dev/serial/by-id/... path) for the
+    Oscilloscope's port, read lazily so this works even at the module-level
+    call below, before admin_config's top-level import further down runs."""
+    try:
+        from admin_config import get_effective_ui_config
+        return (get_effective_ui_config().get('defaults', {}).get('osc_port') or '').strip()
+    except Exception:
+        return ''
+
+
 def detect_osc_port():
     """Detect the scope board's USB VID:PID (STM32 CDC ACM 0483:5740, with legacy
     ESP32/Arduino USB-serial bridges kept as fallback). Requires an exact vid+pid
     pair match AND a /dev/ttyACM* path, since the scope always enumerates as CDC
     ACM while student/teacher MCU boards (CP210x/CH340 bridges) enumerate as
     /dev/ttyUSB* — this keeps a teacher/student board from ever being misdetected
-    as the oscilloscope just because it shares a VID or PID with one of these pairs."""
+    as the oscilloscope just because it shares a VID or PID with one of these pairs.
+
+    An admin-configured 'osc_port' override (a stable by-id path) skips this
+    scan entirely — needed once more than one attached device could match the
+    whitelist above, or when raw /dev/ttyACM* indices get confusing next to
+    other ACM devices on the same Pi (e.g. a debug probe's virtual COM port)."""
     global OSC_PORT
     if list_ports is None: return None
+    override = _osc_port_override()
+    if override:
+        resolved = os.path.realpath(override)
+        if os.path.exists(resolved):
+            OSC_PORT = resolved
+            print(f"[OSC] Using admin-configured scope port: {override} -> {OSC_PORT}")
+            return OSC_PORT
+        print(f"[OSC] Configured scope port {override} not found on this Pi, falling back to auto-detect")
     ports = list_ports.comports()
     for p in ports:
         if not re.match(r'^/dev/ttyACM\d+$', p.device):
@@ -105,6 +129,21 @@ def detect_osc_port():
              print(f"[OSC] Auto-detected scope board at {OSC_PORT}")
              return OSC_PORT
     return None
+
+
+def _reset_osc_connection():
+    """Force osc_worker to re-resolve the Oscilloscope's port on its next
+    loop iteration, so changing the admin's port override takes effect
+    immediately instead of requiring a service restart."""
+    global OSC_PORT, osc_ser
+    OSC_PORT = None
+    if osc_ser is not None:
+        try:
+            osc_ser.close()
+        except Exception:
+            pass
+        osc_ser = None
+
 
 detect_osc_port()
 
@@ -682,15 +721,13 @@ def _resolved_flash_port(explicit_port):
     return None, 'No target port resolved — connect to the primary Serial Monitor port first, or set a fixed port for it in Admin Settings.'
 
 
-def list_admin_port_choices():
-    """Stable /dev/serial/by-id paths for the admin's Serial Port picker — these
-    stay pointed at the correct physical board across reboots/replugs, unlike
-    /dev/ttyUSB0 which is just assigned by detection order. Excludes whatever
-    raw device the Oscilloscope currently owns. If a board's bridge chip has no
+def list_by_id_ports(exclude_resolved=None):
+    """Stable /dev/serial/by-id paths — these stay pointed at the correct
+    physical device across reboots/replugs, unlike /dev/ttyUSB0/ttyACM0 which
+    are just assigned by detection order. If a board's bridge chip has no
     unique serial (common with CH340), it won't get its own by-id entry once a
-    second identical board is attached — the admin form always allows typing a
-    custom path (e.g. a /dev/serial/by-path/... one) as a fallback for that case.
-    """
+    second identical board is attached — callers always allow typing a custom
+    path (e.g. a /dev/serial/by-path/... one) as a fallback for that case."""
     by_id_dir = '/dev/serial/by-id'
     if not os.path.isdir(by_id_dir):
         return []
@@ -698,10 +735,18 @@ def list_admin_port_choices():
     for name in sorted(os.listdir(by_id_dir)):
         full = os.path.join(by_id_dir, name)
         resolved = os.path.realpath(full)
-        if OSC_PORT and resolved == OSC_PORT:
+        if exclude_resolved and resolved == exclude_resolved:
             continue
         choices.append({'path': full, 'label': name, 'resolved': resolved})
     return choices
+
+
+def list_admin_port_choices():
+    """By-id choices for the generic Serial Port and Debug probe pickers —
+    excludes whatever raw device the Oscilloscope currently owns, since
+    neither a serial-port profile nor the debug probe may ever be the same
+    physical device as the always-on Oscilloscope worker."""
+    return list_by_id_ports(exclude_resolved=OSC_PORT)
 
 @app.route('/')
 def index():
@@ -863,8 +908,11 @@ def api_lab_pi_session_end():
             current_session_key = None
         # Turn relay OFF when session ends
         relay_off()
+        # A debug session still holds the USB probe open even after the
+        # booking that started it ends — free it for the next student.
+        _teardown_debug_session()
         print(f"[Session] Ended: {session_key}")
-    
+
     return jsonify({'status': 'success'})
 
 @app.route('/api/lab-pi/update-config', methods=['POST'])
@@ -1163,6 +1211,9 @@ def api_admin_get_ui_config():
     cfg = get_effective_ui_config()
     cfg['control_keys'] = [{'key': key, 'label': label} for key, label in CONTROL_KEYS]
     cfg['available_ports'] = list_admin_port_choices()
+    # Unlike available_ports, the Oscilloscope's own port picker must be able
+    # to show (and re-select) whatever device is currently OSC_PORT itself.
+    cfg['osc_available_ports'] = list_by_id_ports()
     return jsonify(cfg)
 
 
@@ -1183,9 +1234,16 @@ def api_admin_save_ui_config():
         'serial_plotter_allow_port_switch': bool(defaults.get('serial_plotter_allow_port_switch')),
         'serial_plotter_default_port_id': (defaults.get('serial_plotter_default_port_id') or '').strip(),
         'serial_plotter_required_prefixes': required_prefixes,
+        'debug_board_id': (defaults.get('debug_board_id') or '').strip(),
+        'debug_port': (defaults.get('debug_port') or '').strip(),
+        'osc_board_id': (defaults.get('osc_board_id') or '').strip(),
+        'osc_port': (defaults.get('osc_port') or '').strip(),
     }
     experiment_name = (data.get('experiment_name') or '').strip()
+    osc_port_changed = new_defaults['osc_port'] != load_ui_config().get('defaults', {}).get('osc_port', '')
     cfg = save_ui_config(new_controls, new_defaults, experiment_name=experiment_name)
+    if osc_port_changed:
+        _reset_osc_connection()
     socketio.emit('ui_config_updated', get_student_ui_config())
     sync_serial_profiles()
     return jsonify(cfg)
@@ -1944,6 +2002,138 @@ def handle_reset_serial(data):
                 temp_ser.close()
             except Exception:
                 pass
+
+# ---------- HARDWARE DEBUGGER (GDB/OpenOCD) ----------
+# Browser <-> Master <-> here, over the same session-scoped SocketIO relay
+# every other event on this page already uses (see Master's
+# _relay_from_browser and RELAYED_EVENTS) — no separate service or protocol.
+# Only one debug session at a time: the probe is physical hardware, and a
+# Lab Pi only ever has one active booking anyway (current_session_key).
+from debug.boards import get_board
+from debug.gdb_bridge import GdbSession
+from debug.mock_gdb import MockGdbSession
+from debug.openocd_manager import OpenOCDManager
+from debug.ws_protocol import handle_command as _handle_debug_command
+
+DEBUG_MOCK = os.environ.get('DEBUG_MOCK') == '1'
+_DEBUG_GDB_PORT = int(os.environ.get('DEBUG_GDB_PORT', '3333'))
+_debug_gdb = None
+_debug_openocd = None
+
+
+def _probe_serial_from_by_id_path(path):
+    """Best-effort extraction of a USB device's serial number from a
+    /dev/serial/by-id/... symlink name, for OpenOCD's 'adapter serial'
+    option. udev's usb-serial by-id names are conventionally
+    'usb-<vendor>_<model>_<serial>[-ifXX]' -- strip a trailing -ifNN
+    interface suffix and take the last underscore-separated segment. Not
+    guaranteed for nonstandard bridges; if OpenOCD rejects the result,
+    clear the admin's Debug port field to fall back to auto-selection."""
+    if not path:
+        return None
+    name = re.sub(r'-if\d+$', '', os.path.basename(path))
+    parts = name.rsplit('_', 1)
+    return parts[-1] if len(parts) == 2 else None
+
+
+def _emit_debug_event(payload):
+    # Called from the reader greenthread, outside any request context, so
+    # the request-bound `emit()` helper (which assumes flask.request.sid)
+    # doesn't apply — the server instance's own .emit() works from anywhere.
+    # No explicit room: broadcasting is correct since only one student's
+    # browser is ever actually listening on this Lab Pi at a time.
+    socketio.emit('debug_event', payload)
+
+
+def _teardown_debug_session():
+    global _debug_gdb, _debug_openocd
+    if _debug_gdb is not None:
+        try:
+            _debug_gdb.stop()
+        except Exception as e:
+            print(f"[Debug] Error stopping GDB session: {e}")
+        _debug_gdb = None
+    if _debug_openocd is not None:
+        try:
+            _debug_openocd.stop()
+        except Exception as e:
+            print(f"[Debug] Error stopping OpenOCD: {e}")
+        _debug_openocd = None
+
+
+@socketio.on('debug_start')
+def handle_debug_start(data):
+    global _debug_gdb, _debug_openocd
+    data = data or {}
+    # The admin's configured MCU (Lab Pi UI settings -> Debug) always wins
+    # over whatever the browser sent, since it's set once per Pi and the
+    # browser's value is just a same-string default derived from board_type.
+    debug_defaults = get_effective_ui_config().get('defaults', {})
+    board_id = (debug_defaults.get('debug_board_id') or '').strip() or data.get('board_id')
+    if _debug_gdb is not None:
+        emit('debug_event', {'event': 'error', 'message': 'A debug session is already active on this board'})
+        return
+    try:
+        board = get_board(board_id)
+    except ValueError as e:
+        emit('debug_event', {'event': 'error', 'message': str(e)})
+        return
+
+    probe_path = (debug_defaults.get('debug_port') or '').strip()
+    probe_serial = _probe_serial_from_by_id_path(probe_path) if probe_path else None
+
+    try:
+        if DEBUG_MOCK:
+            gdb = MockGdbSession(board, _DEBUG_GDB_PORT, on_event=_emit_debug_event)
+        else:
+            _debug_openocd = OpenOCDManager(board, gdb_port=_DEBUG_GDB_PORT, adapter_serial=probe_serial)
+            _debug_openocd.start()
+            gdb = GdbSession(board, _DEBUG_GDB_PORT, on_event=_emit_debug_event)
+        gdb.start()
+    except Exception as e:
+        if _debug_openocd is not None:
+            _debug_openocd.stop()
+            _debug_openocd = None
+        emit('debug_event', {'event': 'error', 'message': f'failed to start debug session: {e}'})
+        return
+
+    _debug_gdb = gdb
+    emit('debug_event', {'event': 'session_started', 'board_id': board.id, 'mock': DEBUG_MOCK})
+
+
+@socketio.on('debug_stop')
+def handle_debug_stop(data=None):
+    _teardown_debug_session()
+    emit('debug_event', {'event': 'session_stopped'})
+
+
+@socketio.on('debug_load_symbols')
+def handle_debug_load_symbols(data):
+    data = data or {}
+    if _debug_gdb is None:
+        emit('debug_event', {'event': 'error', 'message': 'No active debug session'})
+        return
+    elf_path = data.get('elf_path')
+    try:
+        _debug_gdb.load_symbols(elf_path)
+        emit('debug_event', {'event': 'console', 'text': f'symbols loaded from {elf_path}\n'})
+    except Exception as e:
+        emit('debug_event', {'event': 'error', 'message': f'failed to load symbols: {e}'})
+
+
+@socketio.on('debug_command')
+def handle_debug_command(data):
+    data = data or {}
+    if _debug_gdb is None:
+        emit('debug_event', {'event': 'error', 'message': 'No active debug session'})
+        return
+    try:
+        reply = _handle_debug_command(_debug_gdb, data)
+    except Exception as e:
+        reply = {'event': 'error', 'message': str(e)}
+    if reply is not None:
+        emit('debug_event', reply)
+
 
 @socketio.on('waveform_config')
 def handle_waveform_config(cfg):

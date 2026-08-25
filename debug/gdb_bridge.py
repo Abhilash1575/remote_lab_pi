@@ -1,0 +1,288 @@
+"""Bridges GDB/MI to the rest of the Lab Pi's Flask-SocketIO app.
+
+Commands that need a reply (read registers/memory, disassemble, set/remove
+breakpoint) are tagged with a numeric MI token; a background greenthread
+drains every GDB/MI response and either resolves the matching pending
+eventlet Event (tokened) or forwards it as a `debug_event` SocketIO emit
+(untokened async notifications such as `*stopped` from continue/step/pause).
+
+Adapted from the standalone Debugger/ prototype (backend/app/gdb_bridge.py).
+That version was built on asyncio (a Future per pending token, an
+asyncio.Queue of outbound events, `loop.call_soon_threadsafe` to hand
+results back from GDB's reader thread) because it ran inside FastAPI, which
+hands you an asyncio loop for free. This app runs on Flask-SocketIO +
+eventlet instead, and mixing a second, independent asyncio event loop into
+an eventlet-monkey-patched process is a well-known source of subtle
+deadlocks — eventlet's monkey-patched socket/select primitives assume
+everything happens on its own greenlet hub, not a separate real OS thread
+running asyncio's own selector loop.
+
+None of that machinery was actually load-bearing here: every use of it was
+just "block the caller until a reply with this token shows up". That's
+exactly what eventlet's own `Event` primitive does, and pygdbmi's reader
+methods are already correctly monkey-patch-cooperative when run as a plain
+greenthread (`eventlet.spawn`) — the port below just swaps the asyncio
+primitives for their eventlet-native equivalents 1:1 and drops the loop
+argument and the separate outbound queue+drain-task entirely (the reader
+greenthread emits events directly instead of queueing them for something
+else to forward).
+"""
+
+from __future__ import annotations
+
+import itertools
+from typing import Any, Callable
+
+import eventlet
+from eventlet.event import Event
+from pygdbmi.gdbcontroller import GdbController
+
+from .boards import BoardProfile
+
+REGISTER_TIMEOUT = 5.0
+
+
+class GdbCommandTimeout(RuntimeError):
+    pass
+
+
+class GdbSession:
+    def __init__(self, board: BoardProfile, gdb_port: int, on_event: Callable[[dict[str, Any]], None]):
+        self._board = board
+        self._gdb_port = gdb_port
+        # Called (from the reader greenthread) with every event this session
+        # wants pushed to the browser — e.g. `lambda payload: socketio.emit(
+        # 'debug_event', payload)` in app.py. Broadcasting with no explicit
+        # room is correct here: a Lab Pi only ever has the one active
+        # booking's browser actually listening (see current_session_key).
+        self._on_event = on_event
+
+        self._controller = GdbController(
+            command=[board.gdb_binary, "--nx", "--quiet", "--interpreter=mi3"]
+        )
+        self._token_counter = itertools.count(1)
+        self._pending: dict[int, Event] = {}
+        self._register_names: list[str] = []
+
+        self._reader_greenlet = None
+        self._stop_reader = False
+        self._symbols_loaded = False
+        # GDB's var-object names (e.g. "var2") aren't the expression text,
+        # so track expr alongside each one for display / re-sending to the UI.
+        self._watches: dict[str, str] = {}
+
+    # ---- lifecycle -----------------------------------------------------
+
+    def start(self) -> None:
+        self._reader_greenlet = eventlet.spawn(self._read_loop)
+        # Without this, GDB processes MI commands synchronously: once
+        # -exec-continue is sent it blocks reading stdin until the target
+        # stops on its own, so pause/reset/anything else sent meanwhile is
+        # silently queued and never delivered.
+        self._write("-gdb-set mi-async on", tokened=False)
+        self._write(f"-target-select remote localhost:{self._gdb_port}", tokened=False)
+        # A freshly attached session otherwise inherits whatever halt/run
+        # state the CPU was left in by the previous session — students
+        # would start stepping from an arbitrary leftover point instead of
+        # the actual entry point of whatever is currently flashed. Reset
+        # to a known-good starting state every time a session begins.
+        self.reset(halt=True)
+
+    def stop(self) -> None:
+        self._stop_reader = True
+        if self._reader_greenlet is not None:
+            self._reader_greenlet.kill()
+            self._reader_greenlet = None
+        try:
+            self._controller.exit()
+        except Exception:
+            pass
+
+    def load_symbols(self, elf_path: str) -> None:
+        self._write(f"-file-exec-and-symbols {elf_path}", tokened=False)
+        self._symbols_loaded = True
+
+    # ---- fire-and-forget execution control ------------------------------
+
+    def cont(self) -> None:
+        self._write("-exec-continue", tokened=False)
+
+    def step(self) -> None:
+        # Source-line stepping needs function/line bounds from symbols;
+        # without them GDB errors "Cannot find bounds of current
+        # function", so fall back to instruction-level until an ELF is
+        # loaded via load_symbols().
+        cmd = "-exec-step" if self._symbols_loaded else "-exec-step-instruction"
+        self._write(cmd, tokened=False)
+
+    def step_over(self) -> None:
+        cmd = "-exec-next" if self._symbols_loaded else "-exec-next-instruction"
+        self._write(cmd, tokened=False)
+
+    def pause(self) -> None:
+        self._write("-exec-interrupt", tokened=False)
+
+    def reset(self, halt: bool = True) -> None:
+        # GDB refuses to run "monitor" commands while the target is
+        # executing ("Cannot execute this command while the selected
+        # thread is running") — it doesn't queue them, it just errors and
+        # does nothing. So if we're mid -exec-continue, interrupt first.
+        # A fixed sleep to wait for the halt to land is unreliable (timed
+        # out in testing under real hardware jitter) — retry the monitor
+        # command instead until it stops erroring, which adapts to
+        # however long the actual halt takes.
+        self._write("-exec-interrupt", tokened=False)
+        cmd = "reset halt" if halt else "reset"
+        monitor_cmd = f'-interpreter-exec console "monitor {cmd}"'
+        for _ in range(15):
+            resp = self._send_and_wait(monitor_cmd)
+            if resp.get("message") != "error":
+                break
+            eventlet.sleep(0.2)
+
+        if halt:
+            # OpenOCD's reset+halt happens out-of-band from GDB's own
+            # execution tracking (it went out over the monitor/qRcmd
+            # channel, not GDB's normal exec control), so GDB never emits
+            # its own *stopped record for it, and its register cache goes
+            # stale (it'll happily return the pre-reset PC otherwise).
+            # "maintenance flush register-cache" forces GDB to re-read
+            # every register from the target instead of trusting its cache.
+            self._send_and_wait('-interpreter-exec console "maintenance flush register-cache"')
+            pc = self.read_registers().get("pc", "")
+            self._on_event({"event": "stopped", "reason": "reset", "pc": pc, "frame": {"addr": pc}, "file": None, "line": None})
+
+    # ---- request/response commands --------------------------------------
+
+    def set_breakpoint(self, addr: str) -> dict[str, Any]:
+        return self._send_and_wait(f"-break-insert *{addr}")
+
+    def remove_breakpoint(self, bp_id: int) -> dict[str, Any]:
+        return self._send_and_wait(f"-break-delete {bp_id}")
+
+    def read_registers(self) -> dict[str, str]:
+        if not self._register_names:
+            names_resp = self._send_and_wait("-data-list-register-names")
+            self._register_names = names_resp.get("payload", {}).get("register-names", [])
+
+        values_resp = self._send_and_wait("-data-list-register-values x")
+        values = values_resp.get("payload", {}).get("register-values", [])
+        result: dict[str, str] = {}
+        for entry in values:
+            idx = int(entry["number"])
+            name = self._register_names[idx] if idx < len(self._register_names) else f"r{idx}"
+            result[name] = entry["value"]
+        return result
+
+    def read_memory(self, addr: str, length: int) -> dict[str, Any]:
+        resp = self._send_and_wait(f"-data-read-memory-bytes {addr} {length}")
+        blocks = resp.get("payload", {}).get("memory", [])
+        if not blocks:
+            return {"addr": addr, "bytes": ""}
+        return {"addr": blocks[0]["begin"], "bytes": blocks[0]["contents"]}
+
+    def disassemble(self, addr: str, count: int) -> list[dict[str, Any]]:
+        # Rough byte span for `count` Thumb/ARM instructions (up to 4 bytes each);
+        # good enough for a debug view, not used for anything safety-critical.
+        end = f"{addr}+{count * 4}"
+        resp = self._send_and_wait(f"-data-disassemble -s {addr} -e {end} -- 0")
+        return resp.get("payload", {}).get("asm_insns", [])
+
+    def read_locals(self) -> list[dict[str, Any]]:
+        # Needs symbols (load_symbols) and a stopped frame with debug info;
+        # GDB errors otherwise ("No frame selected" / no symbol table) —
+        # that just means "no locals to show", not a real failure.
+        resp = self._send_and_wait("-stack-list-variables --simple-values")
+        if resp.get("message") == "error":
+            return []
+        return resp.get("payload", {}).get("variables", [])
+
+    def add_watch(self, expr: str) -> dict[str, Any]:
+        # Escape so an expression containing a literal quote (e.g. a string
+        # comparison) can't break out of the MI command's quoted argument.
+        escaped = expr.replace("\\", "\\\\").replace('"', '\\"')
+        resp = self._send_and_wait(f'-var-create - * "{escaped}"')
+        if resp.get("message") == "error":
+            return {"error": resp.get("payload", {}).get("msg", "invalid expression")}
+        payload = resp.get("payload", {})
+        name = payload.get("name")
+        if name:
+            self._watches[name] = expr
+        return {"name": name, "expr": expr, "type": payload.get("type"), "value": payload.get("value")}
+
+    def remove_watch(self, name: str) -> None:
+        self._watches.pop(name, None)
+        self._send_and_wait(f"-var-delete {name}")
+
+    def update_watches(self) -> list[dict[str, Any]]:
+        if not self._watches:
+            return []
+        resp = self._send_and_wait("-var-update --all-values *")
+        if resp.get("message") == "error":
+            return []
+        changes = resp.get("payload", {}).get("changelist", [])
+        for change in changes:
+            change["expr"] = self._watches.get(change.get("name"), "")
+        return changes
+
+    # ---- internals -------------------------------------------------------
+
+    def _write(self, cmd: str, *, tokened: bool) -> int | None:
+        token = None
+        if tokened:
+            token = next(self._token_counter)
+            cmd = f"{token}{cmd}"
+        self._controller.write(cmd, timeout_sec=0, read_response=False)
+        return token
+
+    def _send_and_wait(self, cmd: str, timeout: float = REGISTER_TIMEOUT) -> dict[str, Any]:
+        token = next(self._token_counter)
+        ev = Event()
+        self._pending[token] = ev
+        self._controller.write(f"{token}{cmd}", timeout_sec=0, read_response=False)
+        try:
+            with eventlet.Timeout(timeout):
+                return ev.wait()
+        except eventlet.Timeout:
+            raise GdbCommandTimeout(f"GDB command timed out after {timeout}s: {cmd}")
+        finally:
+            self._pending.pop(token, None)
+
+    def _read_loop(self) -> None:
+        while not self._stop_reader:
+            try:
+                responses = self._controller.get_gdb_response(timeout_sec=0.5, raise_error_on_timeout=False)
+            except Exception:
+                if self._stop_reader:
+                    return
+                continue
+            for resp in responses:
+                self._dispatch(resp)
+
+    def _dispatch(self, resp: dict[str, Any]) -> None:
+        token = resp.get("token")
+        if token is not None and token in self._pending:
+            ev = self._pending[token]
+            if not ev.ready():
+                ev.send(resp)
+            return
+        self._on_event(_to_event(resp))
+
+
+def _to_event(resp: dict[str, Any]) -> dict[str, Any]:
+    if resp.get("type") == "notify" and resp.get("message") == "stopped":
+        payload = resp.get("payload", {})
+        frame = payload.get("frame", {})
+        return {
+            "event": "stopped",
+            "reason": payload.get("reason"),
+            "pc": frame.get("addr"),
+            "frame": frame,
+            # Only present once symbols are loaded (load_symbols); None
+            # otherwise, since GDB has no source mapping without an ELF.
+            "file": frame.get("file"),
+            "line": frame.get("line"),
+        }
+    if resp.get("type") in ("console", "log", "target"):
+        return {"event": "console", "text": resp.get("payload") or ""}
+    return {"event": "raw", "data": resp}

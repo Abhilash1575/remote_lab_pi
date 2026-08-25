@@ -15,6 +15,10 @@ psutil>=5.9.0
 python-dotenv>=0.19.0
 numpy>=1.20.0
 scipy>=1.7.0
+# Hardware debugger (GDB/OpenOCD) -- see debug/. openocd and a GDB binary
+# (gdb-multiarch on Raspberry Pi OS/Debian) are OS packages, not pip --
+# install separately (apt install openocd gdb-multiarch).
+pygdbmi>=0.11
 # Audio streaming dependencies
 aiohttp>=3.8.0
 aiortc>=1.5.0
