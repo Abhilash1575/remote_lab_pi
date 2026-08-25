@@ -63,7 +63,10 @@ BOARDS: dict[str, BoardProfile] = {
         # driver (ti_icdi_usb.c) only implements JTAG, so transport must be
         # forced — auto-selection defaults to SWD and fails to open.
         openocd_interface="interface/ti-icdi.cfg",
-        openocd_target="target/ti/stellaris.cfg",
+        # Verified against this OS's actual openocd scripts dir -- it's
+        # target/stellaris.cfg, not target/ti/stellaris.cfg (no such 'ti'
+        # subdirectory exists under target/ in stock OpenOCD script trees).
+        openocd_target="target/stellaris.cfg",
         openocd_transport="jtag",
         gdb_binary="gdb-multiarch",
     ),
