@@ -2109,6 +2109,7 @@ def handle_debug_start(data):
     probe_path = (debug_defaults.get('debug_port') or '').strip()
     probe_serial = _probe_serial_from_by_id_path(probe_path) if probe_path else None
 
+    gdb = None
     try:
         if DEBUG_MOCK:
             gdb = MockGdbSession(board, _DEBUG_GDB_PORT, on_event=_emit_debug_event)
@@ -2116,15 +2117,29 @@ def handle_debug_start(data):
             _debug_openocd = OpenOCDManager(board, gdb_port=_DEBUG_GDB_PORT, adapter_serial=probe_serial)
             _debug_openocd.start()
             gdb = GdbSession(board, _DEBUG_GDB_PORT, on_event=_emit_debug_event)
+        # Set before start(), not after: GDB auto-halts on attach (before our
+        # own deliberate reset+halt even runs) and that fires an unsolicited
+        # 'stopped' debug_event immediately -- the browser reacts to *any*
+        # 'stopped' by requesting registers/disasm/locals/watches right away
+        # (see the 'stopped' case in templates/index.html). If _debug_gdb
+        # were still None at that point, every one of those bounces back as
+        # a bogus "No active debug session" error even though the session
+        # is, from the student's perspective, mid-connect and about to work.
+        _debug_gdb = gdb
         gdb.start()
     except Exception as e:
+        _debug_gdb = None
+        if gdb is not None:
+            try:
+                gdb.stop()
+            except Exception:
+                pass
         if _debug_openocd is not None:
             _debug_openocd.stop()
             _debug_openocd = None
         emit('debug_event', {'event': 'error', 'message': f'failed to start debug session: {e}'})
         return
 
-    _debug_gdb = gdb
     emit('debug_event', {'event': 'session_started', 'board_id': board.id, 'mock': DEBUG_MOCK})
 
 

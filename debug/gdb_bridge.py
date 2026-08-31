@@ -19,13 +19,27 @@ running asyncio's own selector loop.
 
 None of that machinery was actually load-bearing here: every use of it was
 just "block the caller until a reply with this token shows up". That's
-exactly what eventlet's own `Event` primitive does, and pygdbmi's reader
-methods are already correctly monkey-patch-cooperative when run as a plain
-greenthread (`eventlet.spawn`) — the port below just swaps the asyncio
-primitives for their eventlet-native equivalents 1:1 and drops the loop
-argument and the separate outbound queue+drain-task entirely (the reader
+exactly what eventlet's own `Event` primitive does, and the reader
 greenthread emits events directly instead of queueing them for something
-else to forward).
+else to forward -- so the port below just swaps the asyncio primitives for
+their eventlet-native equivalents 1:1 and drops the loop argument and the
+separate outbound queue+drain-task entirely.
+
+One thing that ISN'T cooperative, though: pygdbmi spawns GDB itself via a
+plain `subprocess.Popen(..., stdout=PIPE)` and then reads it with its own
+fcntl-non-blocking-fd + raw `select.select()` loop (see IoManager.py) --
+its own hand-rolled scheduling, not delegated to whatever event loop the
+caller happens to be running. Under eventlet.monkey_patch(), that
+`subprocess.Popen` resolves to `eventlet.green.subprocess.Popen`, whose
+`.stdout` is a greenified pipe: `select.select()` still correctly reports
+it readable, but the following `.read()` on that greenified pipe then
+blocks -- forever, no exception -- instead of returning pygdbmi's own
+already-non-blocking-marked fd's available bytes. Every debug session hung
+for the full REGISTER_TIMEOUT on its very first blocking command (the
+mandatory reset+halt in start()) until this was traced down to that:
+GdbController below is built against the *real*, pre-monkey-patch
+subprocess module, so GDB's pipe stays a genuine OS pipe/pty that pygdbmi's
+own read loop was written for.
 """
 
 from __future__ import annotations
@@ -36,6 +50,14 @@ from typing import Any, Callable
 
 import eventlet
 from eventlet.event import Event
+
+# pygdbmi.gdbcontroller does `import subprocess` at module scope; if this
+# module were imported after eventlet.monkey_patch() (as it is here -- see
+# app.py), that binds to eventlet.green.subprocess. Swap it for the
+# unpatched module first so pygdbmi always spawns GDB with a plain
+# subprocess.Popen -- see the docstring above for why the green one hangs.
+import pygdbmi.gdbcontroller as _gdbcontroller_mod
+_gdbcontroller_mod.subprocess = eventlet.patcher.original('subprocess')
 from pygdbmi.gdbcontroller import GdbController
 
 from .boards import BoardProfile
@@ -83,6 +105,19 @@ class GdbSession:
         self._token_counter = itertools.count(1)
         self._pending: dict[int, Event] = {}
         self._register_names: list[str] = []
+        # Flask-SocketIO gives every incoming 'debug_command' its own
+        # greenthread, so e.g. the four auto-refresh commands the frontend
+        # fires on every single 'stopped' event (see the 'stopped' case in
+        # templates/index.html) can genuinely overlap in-flight, especially
+        # while stepping repeatedly. GDB/MI itself is a single serial
+        # command/response stream, and pygdbmi's write() waits for write-
+        # readiness via the (eventlet-patched) `select` module -- two
+        # greenthreads racing there trips eventlet's own multiple-writers-
+        # on-one-fd guard ("Second simultaneous write on fileno N
+        # detected"), surfaced to the student as a bogus debug_event error.
+        # A plain mutex around each write serializes them without changing
+        # any of the request/response matching above (still done by token).
+        self._write_lock = eventlet.Semaphore()
 
         self._reader_greenlet = None
         self._stop_reader = False
@@ -252,14 +287,16 @@ class GdbSession:
         if tokened:
             token = next(self._token_counter)
             cmd = f"{token}{cmd}"
-        self._controller.write(cmd, timeout_sec=0, read_response=False)
+        with self._write_lock:
+            self._controller.write(cmd, timeout_sec=0, read_response=False)
         return token
 
     def _send_and_wait(self, cmd: str, timeout: float = REGISTER_TIMEOUT) -> dict[str, Any]:
         token = next(self._token_counter)
         ev = Event()
         self._pending[token] = ev
-        self._controller.write(f"{token}{cmd}", timeout_sec=0, read_response=False)
+        with self._write_lock:
+            self._controller.write(f"{token}{cmd}", timeout_sec=0, read_response=False)
         try:
             with eventlet.Timeout(timeout):
                 return ev.wait()
