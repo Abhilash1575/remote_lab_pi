@@ -7,8 +7,8 @@
 # It clones the repository and configures the Lab Pi to connect to Master Pi
 #
 # Usage:
-#   wget -O install-lab-pi.sh <install-script-url>
-#   chmod +x install-lab-pi.sh
+#   Run from inside your remote_lab_pi checkout (or an empty directory, which
+#   the script will clone the repository into):
 #   ./install-lab-pi.sh
 #
 # Required Environment Variables:
@@ -31,7 +31,10 @@ NC='\033[0m'
 
 # Resolve these up front so every later step (including the ustreamer build,
 # which cd's back into the project dir) can rely on them being set.
-PROJECT_DIR="$HOME/lab-pi"
+# The project dir is wherever this script is run from, not a hardcoded
+# path -- this way .env, the venv, and the systemd services all end up
+# next to the code you actually have checked out.
+PROJECT_DIR="$(pwd)"
 CURRENT_USER=$(whoami)
 CURRENT_HOME=$(eval echo ~"$CURRENT_USER")
 
@@ -66,24 +69,60 @@ get_hostname() {
     hostname -s 2>/dev/null || echo "raspberrypi"
 }
 
+# Prompt on the controlling terminal rather than this script's own stdin.
+# This keeps prompts working even when the script itself is invoked
+# non-interactively (e.g. `curl ... | bash`, `ssh host bash install-lab-pi.sh`,
+# a cron/CI job). Without this, `read -p` reads EOF immediately in those
+# cases and, combined with `set -e`, aborts the whole script on the very
+# first prompt — leaving .env missing or half-written instead of populated
+# with the defaults. If there's no controlling terminal at all, the read is
+# skipped (rather than killing the script) and the caller's own default
+# takes over.
+prompt_read() {
+    local __prompt="$1" __var="$2"
+    # HAS_TTY (checked once, up front) already confirms /dev/tty opens
+    # cleanly, so no need to silence stderr here -- read -p writes its
+    # prompt text to stderr, and doing so would make it invisible.
+    [ "$HAS_TTY" = "1" ] || return 0
+    read -r -p "$__prompt" "$__var" < /dev/tty || true
+}
+
 # ============================================================================
 # Step 1: Get Configuration
 # ============================================================================
 echo -e "${YELLOW}Step 1: Configuration${NC}"
 echo ""
 
+# -r/-w on /dev/tty only check permission bits, not whether a controlling
+# terminal actually exists to open — actually try it, with stderr silenced
+# so a headless run doesn't print "/dev/tty: No such device or address".
+if { : < /dev/tty; } 2>/dev/null; then
+    HAS_TTY=1
+else
+    HAS_TTY=0
+fi
+
+if [ "$HAS_TTY" = "0" ]; then
+    echo -e "${YELLOW}⚠️  No interactive terminal detected — configuration prompts will be skipped.${NC}"
+    echo -e "${YELLOW}   Any value not already set via environment variable will use its default${NC}"
+    echo -e "${YELLOW}   (or be left blank for optional fields). To customize, run this script${NC}"
+    echo -e "${YELLOW}   directly in a terminal, or pre-export: LAB_PI_ID, LAB_PI_NAME, LAB_PI_MAC,${NC}"
+    echo -e "${YELLOW}   EXPERIMENT_ID, MASTER_URL, MASTER_API_KEY, LOCATION.${NC}"
+    echo ""
+fi
+
 # Get hostname for default values
 DETECTED_HOSTNAME=$(get_hostname)
 
 # Lab Pi ID - use hostname as default
 if [ -z "$LAB_PI_ID" ]; then
-    read -p "Enter Lab Pi ID (default: lab-$DETECTED_HOSTNAME): " LAB_PI_ID
+    prompt_read "Enter Lab Pi ID (default: lab-$DETECTED_HOSTNAME): " LAB_PI_ID
     LAB_PI_ID=${LAB_PI_ID:-lab-$DETECTED_HOSTNAME}
 fi
 
 # Lab Pi Name - use hostname as default
 if [ -z "$LAB_PI_NAME" ]; then
-    read -p "Enter Lab Pi Name (default: Lab Pi $DETECTED_HOSTNAME): " LAB_PI_NAME
+    prompt_read "Enter Lab Pi Name (default: Lab Pi $DETECTED_HOSTNAME): " LAB_PI_NAME
     LAB_PI_NAME=${LAB_PI_NAME:-Lab Pi $DETECTED_HOSTNAME}
 fi
 
@@ -93,36 +132,36 @@ if [ -z "$LAB_PI_MAC" ]; then
     DETECTED_MAC=$(get_mac_address)
     if [ -n "$DETECTED_MAC" ]; then
         echo -e "Detected MAC: ${GREEN}$DETECTED_MAC${NC}"
-        read -p "Use this MAC address? (Y/n): " USE_DETECTED
+        prompt_read "Use this MAC address? (Y/n): " USE_DETECTED
         if [ "$USE_DETECTED" != "n" ] && [ "$USE_DETECTED" != "N" ]; then
             LAB_PI_MAC="$DETECTED_MAC"
         fi
     fi
     if [ -z "$LAB_PI_MAC" ]; then
-        read -p "Enter MAC address (optional, press Enter to skip): " LAB_PI_MAC
+        prompt_read "Enter MAC address (optional, press Enter to skip): " LAB_PI_MAC
     fi
 fi
 
 # Experiment ID - default to 1
 if [ -z "$EXPERIMENT_ID" ]; then
-    read -p "Enter Experiment ID (default: 1): " EXPERIMENT_ID
+    prompt_read "Enter Experiment ID (default: 1): " EXPERIMENT_ID
     EXPERIMENT_ID=${EXPERIMENT_ID:-1}
 fi
 
 # Master URL - use common default
 if [ -z "$MASTER_URL" ]; then
-    read -p "Enter Master Pi URL (default: http://10.114.62.73:5000): " MASTER_URL 
+    prompt_read "Enter Master Pi URL (default: http://10.114.62.73:5000): " MASTER_URL
     MASTER_URL=${MASTER_URL:-http://10.114.62.73:5000}
 fi
 
 # Master API Key (optional)
 if [ -z "$MASTER_API_KEY" ]; then
-    read -p "Enter Master API Key (optional, press Enter to skip): " MASTER_API_KEY
+    prompt_read "Enter Master API Key (optional, press Enter to skip): " MASTER_API_KEY
 fi
 
 # Location (optional)
 if [ -z "$LOCATION" ]; then
-    read -p "Enter Location (optional, e.g., Lab Room 101): " LOCATION
+    prompt_read "Enter Location (optional, e.g., Lab Room 101): " LOCATION
 fi
 
 echo ""
@@ -167,6 +206,7 @@ sudo apt install -y \
     libbsd-dev \
     avrdude \
     openocd \
+    gdb-multiarch \
     alsa-utils \
     libportaudio2 \
     ffmpeg
@@ -196,25 +236,35 @@ cd "$PROJECT_DIR"
 echo -e "${YELLOW}Step 5: DFRobot UPS will be installed after project setup...${NC}"
 
 # ============================================================================
-# Step 6: Clone/Pull Repository
+# Step 6: Set up the project in the current directory
 # ============================================================================
 echo -e "${YELLOW}Step 6: Setting up project...${NC}"
 
-if [ -d "$PROJECT_DIR" ]; then
-    echo "Project directory already exists. Pulling latest changes..."
+# PROJECT_DIR is `pwd`, so it always exists -- the question is whether it's
+# already a checkout of this repo, empty (bootstrap: clone into it), or
+# neither (refuse rather than guess).
+if [ -d "$PROJECT_DIR/.git" ]; then
+    echo "Already inside a git checkout at $PROJECT_DIR -- using it as-is."
+    echo "(Not auto git-pulling/resetting, so this doesn't clobber local changes" \
+         "you may have here -- pull manually first if you want the latest code.)"
     cd "$PROJECT_DIR"
-    # Use --no-rebase to handle divergent branches (merge strategy)
-    git pull --no-rebase || {
-        echo "Git pull failed due to divergent branches. Attempting to reset..."
-        git fetch origin
-        git reset --hard origin/main
-    }
-else
-    echo "Cloning repository..."
+elif [ -z "$(find "$PROJECT_DIR" -mindepth 1 -maxdepth 1 ! -name "$(basename "$0")" -print -quit 2>/dev/null)" ]; then
+    echo "Current directory is empty -- cloning repository into it..."
     # Replace with your actual repository URL
     REPO_URL=${REPO_URL:-"https://github.com/Abhilash1575/remote_lab_pi.git"}
-    git clone "$REPO_URL" "$PROJECT_DIR"
+    # `git clone` refuses a target dir that already holds this script, so
+    # clone to a scratch dir and move the checkout (dotfiles included) up.
+    CLONE_TMP="$(mktemp -d)"
+    git clone "$REPO_URL" "$CLONE_TMP"
+    shopt -s dotglob
+    mv "$CLONE_TMP"/* "$PROJECT_DIR"/
+    shopt -u dotglob
+    rmdir "$CLONE_TMP"
     cd "$PROJECT_DIR"
+else
+    echo -e "${RED}❌ $PROJECT_DIR is not a git repository and isn't empty.${NC}"
+    echo "Run this script from inside your remote_lab_pi checkout, or from an empty directory."
+    exit 1
 fi
 
 # ============================================================================
@@ -287,7 +337,7 @@ fi
 source venv/bin/activate
 pip install --upgrade pip
 # Install core dependencies one by one without av
-pip install Flask Flask-SocketIO Flask-SQLAlchemy Flask-Bcrypt Flask-Login Flask-Mail eventlet pyserial lgpio Werkzeug python-dateutil psutil smbus2 gpiozero requests pyaudio esptool aiohttp numpy scipy python-dotenv greenlet || echo "Warning: Some dependencies failed to install."
+pip install Flask Flask-SocketIO Flask-SQLAlchemy Flask-Bcrypt Flask-Login Flask-Mail eventlet pyserial lgpio Werkzeug python-dateutil psutil smbus2 gpiozero requests pyaudio esptool aiohttp numpy scipy python-dotenv greenlet "pygdbmi>=0.11" || echo "Warning: Some dependencies failed to install."
 # Try to install pre-built wheel first, otherwise build from source
 echo "Installing PyAudio for audio capture..."
 if ! pip show pyaudio >/dev/null 2>&1; then
@@ -317,9 +367,12 @@ pip install "av>=14.0.0,<17.0.0" || echo "Warning: av installation failed. WebRT
 # Install other required packages
 pip install aioice cryptography google-crc32c pyee pylibsrtp pyopenssl || echo "Warning: Some aiortc dependencies failed."
 
-# Install Python deps from root requirements.txt (which has all dependencies without av)
+# Re-assert the same core dependencies as above (belt-and-suspenders in case
+# externally-managed-environment blocked the first pass) -- NOTE: this list
+# is hand-maintained, not actually read from requirements.txt, so it must be
+# kept in sync with it by hand whenever a new dependency is added there.
 echo "Installing other Python dependencies..."
-pip install --break-system-packages Flask Flask-SocketIO Flask-SQLAlchemy Flask-Bcrypt Flask-Login Flask-Mail eventlet pyserial lgpio Werkzeug python-dateutil psutil smbus2 gpiozero requests pyaudio esptool aiohttp numpy scipy python-dotenv 2>/dev/null || pip install Flask Flask-SocketIO Flask-SQLAlchemy Flask-Bcrypt Flask-Login Flask-Mail eventlet pyserial lgpio Werkzeug python-dateutil psutil smbus2 gpiozero requests pyaudio esptool aiohttp numpy scipy python-dotenv 2>/dev/null || echo "Warning: Some dependencies failed to install."
+pip install --break-system-packages Flask Flask-SocketIO Flask-SQLAlchemy Flask-Bcrypt Flask-Login Flask-Mail eventlet pyserial lgpio Werkzeug python-dateutil psutil smbus2 gpiozero requests pyaudio esptool aiohttp numpy scipy python-dotenv "pygdbmi>=0.11" 2>/dev/null || pip install Flask Flask-SocketIO Flask-SQLAlchemy Flask-Bcrypt Flask-Login Flask-Mail eventlet pyserial lgpio Werkzeug python-dateutil psutil smbus2 gpiozero requests pyaudio esptool aiohttp numpy scipy python-dotenv "pygdbmi>=0.11" 2>/dev/null || echo "Warning: Some dependencies failed to install."
 
 # ============================================================================
 # Step 7: Create Systemd Service
@@ -367,9 +420,9 @@ After=network.target
 [Service]
 Type=simple
 User=$CURRENT_USER
-WorkingDirectory=$CURRENT_HOME/lab-pi
-EnvironmentFile=$CURRENT_HOME/lab-pi/.env
-ExecStart=/usr/bin/python3 $CURRENT_HOME/lab-pi/lab_pi_session_poller.py
+WorkingDirectory=$PROJECT_DIR
+EnvironmentFile=$PROJECT_DIR/.env
+ExecStart=/usr/bin/python3 $PROJECT_DIR/lab_pi_session_poller.py
 Restart=always
 RestartSec=10
 
